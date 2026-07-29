@@ -1,12 +1,26 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } = require('@whiskeysockets/baileys');
+const { 
+    default: makeWASocket, 
+    useMultiFileAuthState, 
+    DisconnectReason, 
+    fetchLatestBaileysVersion,
+    downloadMediaMessage 
+} = require('@whiskeysockets/baileys');
+const qrcode = require('qrcode-terminal');
 const Tesseract = require('tesseract.js');
 const cron = require('node-cron');
 const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
+const http = require('http');
+
+// ==========================================
+// إعدادات المسار الثابت لـ Railway (Volumes)
+// ==========================================
+const basePath = process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
+const DATA_FILE = path.join(basePath, 'daily_data.json');
 
 const ACCOUNTS = [
-    { name: 'فاطمه حسين',       number: '1003092849630001' },
+    { name: 'فاطمه حسين',        number: '1003092849630001' },
     { name: 'حمد خضر',          number: '0273051189600001' },
     { name: 'نمارق عبد الباقي', number: '1003092849830001' },
     { name: 'احمد عبد الباقي',  number: '1003077677580001' },
@@ -15,8 +29,6 @@ const ACCOUNTS = [
     { name: 'خضر صالح',         number: '0273090788480001' },
     { name: 'محمد فتح الرحمن',  number: '0563034575990001' },
 ];
-
-const DATA_FILE = path.join(__dirname, 'daily_data.json');
 
 function today() {
     return new Date().toLocaleDateString('en-GB');
@@ -47,24 +59,31 @@ function resetIfNewDay(data) {
     return data;
 }
 
-function normalizeNum(raw) {
-    return raw.replace(/\s+/g, '').trim();
+// دالة بحث ذكية تقسم أرقام الحساب وتتحقق من تواجدها بغض النظر عن المسافات أو التشويش
+function findAccountSmart(text) {
+    const cleanText = text.replace(/o/gi, '0').replace(/\s+/g, '');
+    
+    for (const acc of ACCOUNTS) {
+        const targetNum = acc.number.trim();
+        const p1 = targetNum.slice(0, 4);
+        const p2 = targetNum.slice(4, 8);
+        const p3 = targetNum.slice(8, 12);
+        
+        if (cleanText.includes(p1) && cleanText.includes(p2) && cleanText.includes(p3)) {
+            return acc;
+        }
+    }
+    return null;
 }
 
-function findAccount(rawNumber) {
-    const clean = normalizeNum(rawNumber);
-    return ACCOUNTS.find(a => normalizeNum(a.number) === clean) || null;
-}
-
-function extractFromText(text) {
-    const result = { fromAccount: null, amount: null };
-    const fromMatch = text.match(/من\s*حساب[\s:-]*([0-9\s]{10,25})/i)
-        || text.match(/from\s*account[\s:-]*([0-9\s]{10,25})/i);
-    if (fromMatch) result.fromAccount = fromMatch[1].trim();
-    const amountMatch = text.match(/المبلغ[\s:-]*([\d,.]+)/i)
-        || text.match(/amount[\s:-]*([\d,.]+)/i);
-    if (amountMatch) result.amount = parseFloat(amountMatch[1].replace(/,/g, ''));
-    return result;
+function extractAmount(text) {
+    const amountMatch = text.match(/(?:المبلغ|مبلغ|القيمة|الاجمالي|Amount|Total)[\s:-]*([0-9,.]+)/i)
+        || text.match(/([0-9]{1,3}(?:,[0-9]{3})*\.[0-9]{2})/);
+        
+    if (amountMatch) {
+        return parseFloat(amountMatch[1].replace(/,/g, ''));
+    }
+    return null;
 }
 
 function buildReport(data) {
@@ -99,12 +118,12 @@ function scheduleReport() {
 
 async function startBot() {
     const { version } = await fetchLatestBaileysVersion();
-    const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+    const { state, saveCreds } = await useMultiFileAuthState(path.join(basePath, 'auth_info'));
 
     sock = makeWASocket({
         version,
         auth: state,
-        printQRInTerminal: true,
+        printQRInTerminal: false,
         logger: pino({ level: 'silent' }),
     });
 
@@ -112,7 +131,8 @@ async function startBot() {
 
     sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
         if (qr) {
-            console.log('امسح QR Code من واتساب');
+            console.log('\n=== امسح QR Code من واتساب ===\n');
+            qrcode.generate(qr, { small: true });
         }
         if (connection === 'close') {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
@@ -157,30 +177,33 @@ async function startBot() {
 
             await sendMsg(groupId, 'جاري قراءة الايصال...');
             try {
-                const buffer = await sock.downloadMediaMessage(msg);
+                const buffer = await downloadMediaMessage(
+                    msg,
+                    'buffer',
+                    {},
+                    { logger: pino({ level: 'silent' }) }
+                );
+                
                 const { data: { text: ocrText } } = await Tesseract.recognize(buffer, 'ara+eng');
-                const extracted = extractFromText(ocrText);
+                console.log("النص المستخرج:", ocrText);
 
-                if (!extracted.fromAccount || !extracted.amount) {
-                    await sendMsg(groupId, 'لم اتمكن من قراءة الايصال. تاكد من وضوح الصورة.');
-                    continue;
-                }
+                const account = findAccountSmart(ocrText);
+                const amount = extractAmount(ocrText);
 
-                const account = findAccount(extracted.fromAccount);
-                if (!account) {
-                    await sendMsg(groupId, 'الحساب غير موجود: ' + extracted.fromAccount);
+                if (!account || !amount) {
+                    await sendMsg(groupId, 'لم اتمكن من قراءة الايصال بدقة. تأكد من وضوح الصورة.');
                     continue;
                 }
 
                 let data = loadData();
                 data = resetIfNewDay(data);
-                data.totals[account.number] = (data.totals[account.number] || 0) + extracted.amount;
+                data.totals[account.number] = (data.totals[account.number] || 0) + amount;
                 saveData(data);
 
                 await sendMsg(groupId,
                     'تم التسجيل!\n' +
                     account.name + '\n' +
-                    'المبلغ: ' + extracted.amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
+                    'المبلغ: ' + amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
                     'اجمالي اليوم: ' + data.totals[account.number].toLocaleString('en-US', { minimumFractionDigits: 2 })
                 );
             } catch (err) {
@@ -192,3 +215,12 @@ async function startBot() {
 }
 
 startBot();
+
+const PORT = process.env.PORT || 3000;
+http.createServer((req, res) => {
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.write('بوت الواتساب يعمل بنجاح على Railway!');
+    res.end();
+}).listen(PORT, () => {
+    console.log(`Web Server is running on port ${PORT}`);
+});
