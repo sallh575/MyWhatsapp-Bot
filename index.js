@@ -6,6 +6,7 @@ const {
     downloadMediaMessage 
 } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const Tesseract = require('tesseract.js');
 const cron = require('node-cron');
 const fs = require('fs');
@@ -59,7 +60,6 @@ function resetIfNewDay(data) {
     return data;
 }
 
-// دالة بحث ذكية تقسم أرقام الحساب وتتحقق من تواجدها بغض النظر عن المسافات أو التشويش
 function findAccountSmart(text) {
     const cleanText = text.replace(/o/gi, '0').replace(/\s+/g, '');
     
@@ -129,9 +129,13 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
         if (qr) {
-            console.log('\n=== امسح QR Code من واتساب ===\n');
+            console.log('\n========================================');
+            console.log('امسح QR Code من الرابط التالي عبر المتصفح:');
+            console.log(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`);
+            console.log('========================================\n');
+            
             qrcode.generate(qr, { small: true });
         }
         if (connection === 'close') {
@@ -185,8 +189,6 @@ async function startBot() {
                 );
                 
                 const { data: { text: ocrText } } = await Tesseract.recognize(buffer, 'ara+eng');
-                console.log("النص المستخرج:", ocrText);
-
                 const account = findAccountSmart(ocrText);
                 const amount = extractAmount(ocrText);
 
