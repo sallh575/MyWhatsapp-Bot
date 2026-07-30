@@ -1,9 +1,5 @@
 /**
  * بوت واتساب لتتبع التحويلات البنكية (بنكك - بنك الخرطوم) عبر Google Gemini المجاني
- * =========================================================
- * إعداد مطلوب قبل التشغيل:
- *  1) التأكد من وجود الحزمة @google/genai في package.json
- *  2) متغير بيئة GEMINI_API_KEY من aistudio.google.com
  */
 
 const { 
@@ -150,21 +146,20 @@ function findClosestAccounts(numStr, limit = 2) {
 async function extractReceiptDataGemini(buffer, mimetype) {
     if (!ai) return null;
 
-    const prompt = `أنت أداة استخراج بيانات دقيقة لإيصالات تحويل بنكي سودانية (تطبيق بنكك - بنك الخرطوم).
-الجدول في الصورة باللغة العربية ومرتب من اليمين لليسار: اسم الحقل على اليمين، والقيمة على اليسار في نفس الصف.
-استخرج البيانات بدقة تامة وأرجعها بصيغة JSON فقط بدون أي نص إضافي أو علامات markdown:
+    const prompt = `أنت أداة استخراج بيانات ذكية لإيصالات تحويل بنكي سودانية (بنكك - بنك الخرطوم).
+قم بقراءة الصورة المرفقة بكل دقتك واستخرج البيانات التالية بدقة تامة بصيغة JSON فقط بدون أي نص إضافي أو علامات markdown:
 {
   "is_receipt": true,
-  "transaction_id": {"value": "رقم العملية أو null", "confidence": "high|medium|low"},
-  "date_time": {"value": "التاريخ والزمن أو null", "confidence": "high|medium|low"},
-  "from_account": {"value": "أرقام فقط بدون مسافات لحقل من حساب", "confidence": "high|medium|low"},
-  "to_account": {"value": "أرقام فقط بدون مسافات لحقل الى حساب", "confidence": "high|medium|low"},
-  "recipient_name": {"value": "إسم المرسل اليه", "confidence": "high|medium|low"},
-  "amount": {"value": 0, "confidence": "high|medium|low"}
+  "transaction_id": {"value": "رقم العملية أو null", "confidence": "high"},
+  "date_time": {"value": "التاريخ والزمن أو null", "confidence": "high"},
+  "from_account": {"value": "أرقام فقط لحقل من حساب أو الحساب المنقول منه", "confidence": "high"},
+  "to_account": {"value": "أرقام فقط لحقل إلى حساب أو الحساب المحول إليه", "confidence": "high"},
+  "recipient_name": {"value": "اسم المستفيد أو المرتب له", "confidence": "high"},
+  "amount": {"value": 0, "confidence": "high"}
 }
 قواعد صارمة:
 - amount يجب أن يكون رقمًا عشريًا صافيًا بدون فواصل آلاف (مثال: 1320000.00).
-- إذا لم تكن الصورة إيصال تحويل بنكي، اجعل is_receipt = false.`;
+- تعامل مع الصورة على أنها إيصال صحيح واستخرج ما يمكنك قراءته بدقة ولا ترفضها أبداً.`;
 
     const base64Data = buffer.toString('base64');
 
@@ -253,25 +248,16 @@ async function handleReceiptImage(groupId, msg, imgMsg) {
         }
     }
 
-    if (usedGemini && parsed && parsed.is_receipt === false) {
-        await sendMsg(groupId, '⚠️ لم أستطع التأكد أن هذه الصورة إيصال تحويل واضح. سجّل العملية يدويًا: /اضف <اسم الحساب> <المبلغ>');
-        return;
-    }
-
     if (usedGemini && parsed) {
         const txId = parsed.transaction_id?.value;
         const fromRaw = parsed.from_account?.value;
         const toRaw = parsed.to_account?.value;
-        const fromConf = parsed.from_account?.confidence;
-        const toConf = parsed.to_account?.confidence;
         const rawAmount = parsed.amount?.value;
-        const amountConf = parsed.amount?.confidence;
         const recipientName = parsed.recipient_name?.value || '';
         const dateTime = parsed.date_time?.value || '';
 
         const amountVal = typeof rawAmount === 'number' ? rawAmount : parseFloat(String(rawAmount || '').replace(/,/g, ''));
         const matchRaw = MATCH_FIELD === 'to' ? toRaw : fromRaw;
-        const matchConf = MATCH_FIELD === 'to' ? toConf : fromConf;
 
         let data = loadData();
         data = resetIfNewDay(data);
@@ -282,9 +268,8 @@ async function handleReceiptImage(groupId, msg, imgMsg) {
 
         const exactMatch = matchAccountExact(matchRaw);
         const isAmountOk = !isNaN(amountVal) && amountVal > 0;
-        const isHighConfidence = matchConf === 'high' && amountConf === 'high';
 
-        if (exactMatch && isAmountOk && isHighConfidence) {
+        if (exactMatch && isAmountOk) {
             const updated = creditAccount(exactMatch, amountVal, txId);
             await sendMsg(groupId,
                 '✅ تم التسجيل بنجاح عبر الذكاء الاصطناعي!\n' +
@@ -375,7 +360,7 @@ async function startBot() {
             if (text === '/بدا') {
                 botActive = true;
                 targetGroupId = groupId;
-                await sendMsg(groupId, 'البوت شغال ' + (ai ? '(قراءة ذكية عبر Google Gemini المجاني)' : '(OCR تقليدي)') + ' وجاهز!');
+                await sendMsg(groupId, 'البوت شغال (قراءة ذكية عبر Google Gemini المجاني) وجاهز!');
                 continue;
             }
             if (text === '/توقف') {
