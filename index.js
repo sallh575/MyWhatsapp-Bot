@@ -2,8 +2,8 @@
  * بوت واتساب لتتبع التحويلات البنكية (بنكك - بنك الخرطوم) عبر Google Gemini المجاني
  * =========================================================
  * إعداد مطلوب قبل التشغيل:
- *  1) npm install @google/genai sharp
- *  2) متغير بيئة GEMINI_API_KEY من aistudio.google.com (مجاني تماماً)
+ *  1) التأكد من وجود الحزمة @google/genai في package.json
+ *  2) متغير بيئة GEMINI_API_KEY من aistudio.google.com
  */
 
 const { 
