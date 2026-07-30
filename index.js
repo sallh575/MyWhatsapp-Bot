@@ -1,6 +1,13 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المستقرة والمقاومة للأخطاء
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - نسخة فحص الأخطاء
  */
+
+process.on('uncaughtException', (err) => {
+    console.error('🔥 خطأ قاتل عند الإقلاع (Uncaught Exception):', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('🔥 وعد مرفوض لم يتم التعامل معه (Unhandled Rejection):', reason);
+});
 
 const { 
     default: makeWASocket, 
@@ -102,8 +109,6 @@ function normalizeDigits(str) {
 
 function findMatchingAccount(fullText) {
     const cleanText = normalizeDigits(fullText);
-    
-    // 1. البحث برقم الحساب الكامل أو آخر 4 أرقام
     for (const acc of ACCOUNTS) {
         const target = normalizeDigits(acc.number);
         const shortTarget = target.slice(-4);
@@ -111,51 +116,33 @@ function findMatchingAccount(fullText) {
             return acc;
         }
     }
-
-    // 2. البحث باسم صاحب الحساب النصي
     for (const acc of ACCOUNTS) {
         if (fullText.includes(acc.name)) {
             return acc;
         }
     }
-
     return null;
 }
 
 function extractAmount(fullText) {
-    // البحث عن المبالغ النقدية بأي صيغة داخل النص (مثل 1,320,000.00 أو 5000.00)
     const matches = fullText.match(/\b\d{1,3}(?:,\d{3})*\.\d{2}\b/g) || fullText.match(/\b\d+\.\d{2}\b/g);
     if (matches && matches.length > 0) {
         let parsed = matches.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
         parsed = parsed.filter(n => n > 0 && n < 100000000);
         if (parsed.length > 0) return Math.max(...parsed);
     }
-    
-    // بحث بديل لو لم يجد علامة عشرية دقيقة
-    const fallbackMatches = fullText.match(/\b\d{4,}\b/g);
-    if (fallbackMatches) {
-        const numbers = fallbackMatches.map(n => parseFloat(n)).filter(n => n > 100 && n < 100000000);
-        if (numbers.length > 0) return Math.max(...numbers);
-    }
-
     return null;
 }
 
-// -------------------- قراءة الإيصال عبر Gemini بمرونة تامة --------------------
+// -------------------- قراءة الإيصال عبر Gemini --------------------
 
 async function readReceiptWithGemini(buffer, mimetype) {
     if (!ai) throw new Error('GEMINI_API_KEY missing');
 
     const prompt = `أنت مساعد ذكي متخصص في قراءة إيصالات التحويل البنكي السودانية (بنكك - بنك الخرطوم).
-قم بفحص الصورة بدقة واستخرج كل النصوص الظاهرة فيها، وخصوصاً:
-1. أرقام الحسابات الموجودة (من حساب أو إلى حساب).
-2. المبلغ المحول بدقة.
-3. رقم العملية (Transaction ID).
-
-اكتب كل ما تقرأه بوضوح وبدون أي قيود على التنسيق.`;
+قم بفحص الصورة بدقة واستخرج كل النصوص الظاهرة فيها: أرقام الحسابات، المبلغ، رقم العملية.`;
 
     const base64Data = buffer.toString('base64');
-
     const response = await ai.models.generateContent({
         model: 'gemini-1.5-flash',
         contents: [
@@ -163,11 +150,10 @@ async function readReceiptWithGemini(buffer, mimetype) {
             { text: prompt }
         ]
     });
-
     return response.text() || '';
 }
 
-// -------------------- حالة البوت --------------------
+// -------------------- تشغيل البوت --------------------
 
 let botActive = false;
 let targetGroupId = null;
@@ -189,105 +175,101 @@ function scheduleReport() {
     isCronScheduled = true;
 }
 
-// -------------------- تشغيل البوت --------------------
-
 async function startBot() {
-    const { version } = await fetchLatestBaileysVersion();
-    const { state, saveCreds } = await useMultiFileAuthState(path.join(basePath, 'auth_info'));
+    try {
+        const { version } = await fetchLatestBaileysVersion();
+        const { state, saveCreds } = await useMultiFileAuthState(path.join(basePath, 'auth_info'));
 
-    sock = makeWASocket({
-        version,
-        auth: state,
-        printQRInTerminal: false,
-        logger: pino({ level: 'silent' }),
-    });
+        sock = makeWASocket({
+            version,
+            auth: state,
+            printQRInTerminal: false,
+            logger: pino({ level: 'silent' }),
+        });
 
-    sock.ev.on('creds.update', saveCreds);
+        sock.ev.on('creds.update', saveCreds);
 
-    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-        if (qr) {
-            console.log('\n========================================');
-            console.log(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`);
-            console.log('========================================\n');
-            qrcode.generate(qr, { small: true });
-        }
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startBot();
-        } else if (connection === 'open') {
-            console.log('البوت متصل وجاهز!');
-            scheduleReport();
-        }
-    });
-
-    sock.ev.on('messages.upsert', async ({ messages }) => {
-        for (const msg of messages) {
-            if (!msg.message || msg.key.fromMe) continue;
-            if (!msg.key.remoteJid.endsWith('@g.us')) continue;
-
-            const groupId = msg.key.remoteJid;
-            const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || '').trim();
-
-            if (text === '/بدا') {
-                botActive = true;
-                targetGroupId = groupId;
-                await sendMsg(groupId, 'البوت شغال وجاهز لقراءة الإيصالات تلقائياً!');
-                continue;
+        sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+            if (qr) {
+                console.log('\n========================================');
+                console.log(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`);
+                console.log('========================================\n');
+                qrcode.generate(qr, { small: true });
             }
-            if (text === '/توقف') {
-                botActive = false;
-                await sendMsg(groupId, 'تم إيقاف البوت. ارسل /بدا لتشغيله.');
-                continue;
+            if (connection === 'close') {
+                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+                if (shouldReconnect) startBot();
+            } else if (connection === 'open') {
+                console.log('البوت متصل وجاهز!');
+                scheduleReport();
             }
-            if (text === '/تقرير') {
-                let data = loadData();
-                data = resetIfNewDay(data);
-                await sendMsg(groupId, buildReport(data));
-                continue;
-            }
-            if (text === '/الحسابات') {
-                const list = ACCOUNTS.map((a, i) => (i + 1) + ') ' + a.name + ' - ...' + a.number.slice(-4)).join('\n');
-                await sendMsg(groupId, 'الحسابات المسجّلة:\n' + list);
-                continue;
-            }
+        });
 
-            if (!botActive || groupId !== targetGroupId) continue;
+        sock.ev.on('messages.upsert', async ({ messages }) => {
+            for (const msg of messages) {
+                if (!msg.message || msg.key.fromMe) continue;
+                if (!msg.key.remoteJid.endsWith('@g.us')) continue;
 
-            const imgMsg = msg.message.imageMessage;
-            if (!imgMsg) continue;
+                const groupId = msg.key.remoteJid;
+                const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || '').trim();
 
-            await sendMsg(groupId, 'جاري قراءة الإيصال وتحليله...');
-
-            try {
-                const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
-                const geminiText = await readReceiptWithGemini(buffer, imgMsg.mimetype);
-
-                console.log('محتوى النص المستخرج من الصورة:', geminiText);
-
-                const matchedAcc = findMatchingAccount(geminiText);
-                const amountVal = extractAmount(geminiText);
-
-                if (matchedAcc && amountVal && amountVal > 0) {
-                    const updated = creditAccount(matchedAcc, amountVal, null);
-                    await sendMsg(groupId,
-                        '✅ تم تسجيل التحويل بنجاح تلقائياً!\n' +
-                        '👤 الحساب: ' + matchedAcc.name + '\n' +
-                        '💰 المبلغ: ' + amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
-                        '📊 إجمالي اليوم: ' + updated.totals[matchedAcc.number].toLocaleString('en-US', { minimumFractionDigits: 2 })
-                    );
-                } else {
-                    await sendMsg(groupId, 
-                        '⚠️ لم أتمكن من مطابقة الحساب أو المبلغ بدقة من الصورة.\n' +
-                        'يمكنك الإضافة يدوياً بالأمر:\n/اضف <اسم الحساب> <المبلغ>'
-                    );
+                if (text === '/بدا') {
+                    botActive = true;
+                    targetGroupId = groupId;
+                    await sendMsg(groupId, 'البوت شغال وجاهز لقراءة الإيصالات تلقائياً!');
+                    continue;
+                }
+                if (text === '/توقف') {
+                    botActive = false;
+                    await sendMsg(groupId, 'تم إيقاف البوت. ارسل /بدا لتشغيله.');
+                    continue;
+                }
+                if (text === '/تقرير') {
+                    let data = loadData();
+                    data = resetIfNewDay(data);
+                    await sendMsg(groupId, buildReport(data));
+                    continue;
+                }
+                if (text === '/الحسابات') {
+                    const list = ACCOUNTS.map((a, i) => (i + 1) + ') ' + a.name + ' - ...' + a.number.slice(-4)).join('\n');
+                    await sendMsg(groupId, 'الحسابات المسجّلة:\n' + list);
+                    continue;
                 }
 
-            } catch (err) {
-                console.error('خطأ قراءة الإيصال:', err);
-                await sendMsg(groupId, '❌ حدث خطأ تقني أثناء قراءة الصورة.');
+                if (!botActive || groupId !== targetGroupId) continue;
+
+                const imgMsg = msg.message.imageMessage;
+                if (!imgMsg) continue;
+
+                await sendMsg(groupId, 'جاري قراءة الإيصال وتحليله...');
+
+                try {
+                    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
+                    const geminiText = await readReceiptWithGemini(buffer, imgMsg.mimetype);
+
+                    const matchedAcc = findMatchingAccount(geminiText);
+                    const amountVal = extractAmount(geminiText);
+
+                    if (matchedAcc && amountVal && amountVal > 0) {
+                        const updated = creditAccount(matchedAcc, amountVal, null);
+                        await sendMsg(groupId,
+                            '✅ تم تسجيل التحويل بنجاح تلقائياً!\n' +
+                            '👤 الحساب: ' + matchedAcc.name + '\n' +
+                            '💰 المبلغ: ' + amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
+                            '📊 إجمالي اليوم: ' + updated.totals[matchedAcc.number].toLocaleString('en-US', { minimumFractionDigits: 2 })
+                        );
+                    } else {
+                        await sendMsg(groupId, '⚠️ لم أتمكن من مطابقة الحساب أو المبلغ بدقة من الصورة.');
+                    }
+                } catch (err) {
+                    console.error('خطأ بمعالجة الصورة:', err);
+                    await sendMsg(groupId, '❌ حدث خطأ أثناء معالجة الإيصال.');
+                }
             }
-        }
-    });
+        });
+    } catch (err) {
+        console.error('خطأ حرج في تشغيل البوت:', err);
+    }
 }
 
 startBot();
