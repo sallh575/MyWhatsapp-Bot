@@ -58,7 +58,7 @@ function resetIfNewDay(data) {
 }
 
 function findAccountSmart(text) {
-    // إزالة كل شيء عدا الحروف والأرقام لترميم الأخطاء البصرية
+    // نحول النص لأرقام فقط مع تصحيح ذكي لأي حرف انقرأ بالغلط
     const justNumbers = text.replace(/[^0-9a-zA-Z]/g, '').toLowerCase()
         .replace(/[oO]/g, '0')
         .replace(/[liI|]/g, '1')
@@ -70,34 +70,28 @@ function findAccountSmart(text) {
     for (const acc of ACCOUNTS) {
         const targetNum = acc.number.replace(/\D/g, '');
         
-        // 1. بحث دقيق
         if (justNumbers.includes(targetNum)) return acc;
         
-        // 2. بحث مرن لو انقطع رقم من النص
-        const part1 = targetNum.slice(0, 8);
-        const part2 = targetNum.slice(-4);
+        // لو انمسح رقم من النص بسبب خطأ، نبحث عن أول 7 وآخر 5 أرقام
+        const part1 = targetNum.slice(0, 7);
+        const part2 = targetNum.slice(-5);
         if (justNumbers.includes(part1) && justNumbers.includes(part2)) return acc;
     }
     return null;
 }
 
 function extractAmountSmart(text) {
-    // تنظيف النص من كل الحروف وترك الأرقام والفواصل والنقاط فقط
-    let t = text.replace(/[^0-9.,]/g, '');
+    // تحويل الفاصلة العربية لفاصلة إنجليزية، وإزالة كل شيء ما عدا الأرقام والفواصل
+    let t = text.replace(/،/g, ',').replace(/[^0-9.,\s]/g, ' ').replace(/\s+/g, ' ');
 
-    // استخراج المبالغ المنطقية
-    const amounts = t.match(/\d+(?:[.,]\d+)+/g);
-    if (amounts && amounts.length > 0) {
-        let parsed = amounts.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
-        parsed = parsed.filter(n => n > 0 && n < 100000000); // فلترة أرقام الحسابات
-        if (parsed.length > 0) return Math.max(...parsed);
-    }
-
-    // طريقة بديلة قوية: سحب كل الأرقام الصحيحة
-    const rawNums = t.match(/\d+/g);
+    // سحب كل الأرقام اللي تشبه المبالغ
+    const rawNums = t.match(/\b\d{1,3}(?:,\d{3})*(?:\.\d+)?\b/g) || t.match(/\b\d+(?:\.\d+)?\b/g);
+    
     if (rawNums && rawNums.length > 0) {
-        let parsedRaw = rawNums.map(n => parseFloat(n)).filter(n => n > 0 && n < 100000000);
-        if (parsedRaw.length > 0) return Math.max(...parsedRaw);
+        let parsed = rawNums.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n));
+        // استبعاد أي رقم طويل (زي أرقام الحسابات) والاحتفاظ بالمبالغ فقط
+        parsed = parsed.filter(n => n > 0 && n < 100000000);
+        if (parsed.length > 0) return Math.max(...parsed);
     }
     return null;
 }
@@ -133,7 +127,6 @@ function scheduleReport() {
         console.log('تم إرسال التقرير اليومي');
     }, { timezone: 'Africa/Khartoum' });
     isCronScheduled = true;
-    console.log('تم جدولة إرسال التقرير اليومي بنجاح');
 }
 
 async function startBot() {
@@ -177,7 +170,7 @@ async function startBot() {
             if (text === '/بدا') {
                 botActive = true;
                 targetGroupId = groupId;
-                await sendMsg(groupId, 'البوت شغال وجاهز (تم تفعيل وضع قراءة الأرقام الصافي).');
+                await sendMsg(groupId, 'البوت شغال بوضعية القراءة المزدوجة ومستعد!');
                 continue;
             }
             if (text === '/توقف') {
@@ -206,19 +199,18 @@ async function startBot() {
                     { logger: pino({ level: 'silent' }) }
                 );
                 
-                // التغيير السحري هنا: تقييد المحرك بالإنجليزية فقط لضمان 100% قراءة للأرقام
-                const { data: { text: ocrText } } = await Tesseract.recognize(buffer, 'eng');
+                // رجعناها عربي+إنجليزي عشان ما يحذف الأسطر بسبب الكلمات العربية
+                const { data: { text: ocrText } } = await Tesseract.recognize(buffer, 'ara+eng');
 
                 const account = findAccountSmart(ocrText);
                 const amount = extractAmountSmart(ocrText);
 
                 if (!account || !amount) {
-                    // رسالة كشف الأشعة لمعرفة ما الذي رآه البوت بالضبط
-                    const seenNumbers = ocrText.replace(/[^0-9.,]/g, ' ').replace(/\s+/g, ' ').trim();
+                    const seenNumbers = ocrText.replace(/،/g, ',').replace(/[^0-9.,]/g, ' ').replace(/\s+/g, ' ').trim();
                     let errorMsg = '⚠️ لم أتمكن من القراءة بدقة.\n\n';
-                    errorMsg += '🔍 *الأرقام التي استخرجتها العدسة:*\n';
-                    errorMsg += `[ ${seenNumbers.substring(0, 100) || 'لم يتم استخراج أرقام واضحة'} ]\n\n`;
-                    errorMsg += 'إذا كان الحساب والمبلغ غير موجودين في الأرقام أعلاه، يرجى التأكد من وضوح الصورة.';
+                    errorMsg += '🔍 *الأرقام اللي شفتها في الصورة:*\n';
+                    errorMsg += `[ ${seenNumbers.substring(0, 150) || 'لم يتم استخراج أي أرقام'} ]\n\n`;
+                    errorMsg += 'إذا الحساب والمبلغ مو موجودين فوق، تأكد من الإضاءة ووضوح الصورة.';
                     
                     await sendMsg(groupId, errorMsg);
                     continue;
