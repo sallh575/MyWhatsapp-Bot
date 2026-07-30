@@ -1,33 +1,20 @@
 /**
- * بوت واتساب لتتبع التحويلات البنكية (بنكك - بنك الخرطوم)
+ * بوت واتساب لتتبع التحويلات البنكية (بنكك - بنك الخرطوم) عبر Google Gemini المجاني
  * =========================================================
  * إعداد مطلوب قبل التشغيل:
- *  1) npm install @anthropic-ai/sdk sharp
- *     (sharp اختياري، يُستخدم فقط لتحسين مسار OCR الاحتياطي)
- *  2) متغير بيئة ANTHROPIC_API_KEY من console.anthropic.com
- *     - بدونه، يعمل البوت تلقائيًا بـ OCR التقليدي (Tesseract) الأقل دقة
- *  3) اختياري: CLAUDE_VISION_MODEL لتغيير النموذج (افتراضي: claude-sonnet-5)
- *  4) اختياري: MATCH_FIELD=to لمطابقة "الى حساب" بدل "من حساب" (الافتراضي: from)
- *
- * فكرة التصميم:
- *  - قراءة الإيصال تتم بنموذج رؤية (Claude) بدل Tesseract التقليدي، لأنه أدق
- *    بكثير مع جداول عربية على خلفيات ملونة.
- *  - المطابقة مع الحسابات الثمانية تتم بالكود (مطابقة رقمية تامة فقط) وليس
- *    بالنموذج، لتفادي أي "تخمين" من الذكاء الاصطناعي على حساب مختلف يشبه أحد
- *    حساباتكم.
- *  - أي حالة غير مؤكدة 100% (رقم غير واضح، أو لا يوجد تطابق تام) لا تُسجَّل
- *    تلقائيًا أبدًا — بل تُطرح على المجموعة للتأكيد اليدوي. هذا هو الضمان
- *    الحقيقي ضد الأخطاء، وليس فقط دقة القراءة.
+ *  1) npm install @google/genai sharp
+ *  2) متغير بيئة GEMINI_API_KEY من aistudio.google.com (مجاني تماماً)
  */
 
-const {
-    default: makeWASocket,
-    useMultiFileAuthState,
-    DisconnectReason,
+const { 
+    default: makeWASocket, 
+    useMultiFileAuthState, 
+    DisconnectReason, 
     fetchLatestBaileysVersion,
-    downloadMediaMessage
+    downloadMediaMessage 
 } = require('@whiskeysockets/baileys');
 const qrcode = require('qrcode-terminal');
+const { GoogleGenAI } = require('@google/genai');
 const Tesseract = require('tesseract.js');
 const cron = require('node-cron');
 const fs = require('fs');
@@ -35,11 +22,8 @@ const path = require('path');
 const pino = require('pino');
 const http = require('http');
 
-let Anthropic = null;
-try { Anthropic = require('@anthropic-ai/sdk'); } catch (e) { /* لم تُثبَّت بعد */ }
-
 let sharp = null;
-try { sharp = require('sharp'); } catch (e) { /* لم تُثبَّت بعد */ }
+try { sharp = require('sharp'); } catch (e) { /* اختياري */ }
 
 const basePath = process.env.RAILWAY_VOLUME_MOUNT_PATH || __dirname;
 const DATA_FILE = path.join(basePath, 'daily_data.json');
@@ -55,16 +39,14 @@ const ACCOUNTS = [
     { name: 'محمد فتح الرحمن',  number: '0563034575990001' },
 ];
 
-// أي حقل من الإيصال يُطابَق مع قائمة الحسابات: المرسل (from) أو المستلم (to)
 const MATCH_FIELD = (process.env.MATCH_FIELD || 'from').toLowerCase() === 'to' ? 'to' : 'from';
 
-const VISION_MODEL = process.env.CLAUDE_VISION_MODEL || 'claude-sonnet-5';
-const anthropic = (Anthropic && process.env.ANTHROPIC_API_KEY)
-    ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    : null;
+// تهيئة Google Gemini API
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const ai = GEMINI_API_KEY ? new GoogleGenAI({ apiKey: GEMINI_API_KEY }) : null;
 
-if (!anthropic) {
-    console.warn('⚠️  ANTHROPIC_API_KEY غير مضبوط (أو المكتبة غير مثبتة) — سيعمل البوت بـ OCR تقليدي أقل دقة.');
+if (!ai) {
+    console.warn('⚠️ GEMINI_API_KEY غير مضبوط — سيطبع البوت تحذيراً ويعتمد على OCR الاحتياطي.');
 }
 
 // -------------------- تخزين البيانات اليومية --------------------
@@ -124,7 +106,7 @@ function creditAccount(acc, amount, txId) {
     return data;
 }
 
-// -------------------- أدوات مطابقة الحسابات (تتم في الكود، ليس بالنموذج) --------------------
+// -------------------- أدوات المطابقة --------------------
 
 function normalizeDigits(str) {
     if (!str) return '';
@@ -132,7 +114,6 @@ function normalizeDigits(str) {
     return String(str).split('').map(ch => easternToWestern[ch] || ch).join('').replace(/[^0-9]/g, '');
 }
 
-// مطابقة تامة فقط — هذه هي الحالة الوحيدة التي تُسجَّل تلقائيًا
 function matchAccountExact(numStr) {
     const clean = normalizeDigits(numStr);
     if (!clean) return null;
@@ -154,7 +135,6 @@ function levenshtein(a, b) {
     return dp[m][n];
 }
 
-// اقتراحات فقط (لعرضها على البشر) — لا تُستخدم أبدًا للتسجيل التلقائي
 function findClosestAccounts(numStr, limit = 2) {
     const clean = normalizeDigits(numStr);
     if (!clean) return [];
@@ -165,14 +145,14 @@ function findClosestAccounts(numStr, limit = 2) {
         .filter(x => x.dist <= 3);
 }
 
-// -------------------- الاستخراج عبر Claude Vision --------------------
+// -------------------- الاستخراج عبر Google Gemini --------------------
 
-const EXTRACTION_SYSTEM_PROMPT = `أنت أداة استخراج بيانات دقيقة لإيصالات تحويل بنكي سودانية (تطبيق بنكك - بنك الخرطوم).
+async function extractReceiptDataGemini(buffer, mimetype) {
+    if (!ai) return null;
+
+    const prompt = `أنت أداة استخراج بيانات دقيقة لإيصالات تحويل بنكي سودانية (تطبيق بنكك - بنك الخرطوم).
 الجدول في الصورة باللغة العربية ومرتب من اليمين لليسار: اسم الحقل على اليمين، والقيمة على اليسار في نفس الصف.
-
-انقل الأرقام والنصوص كما تراها بالضبط. لا تحاول "تصحيحها" أو تخمين قيمة لا تراها بوضوح، ولا تفترض أي حسابات معروفة مسبقًا.
-
-أرجع JSON فقط بدون أي نص إضافي أو علامات markdown، بالشكل التالي بالضبط:
+استخرج البيانات بدقة تامة وأرجعها بصيغة JSON فقط بدون أي نص إضافي أو علامات markdown:
 {
   "is_receipt": true,
   "transaction_id": {"value": "رقم العملية أو null", "confidence": "high|medium|low"},
@@ -182,59 +162,31 @@ const EXTRACTION_SYSTEM_PROMPT = `أنت أداة استخراج بيانات د
   "recipient_name": {"value": "إسم المرسل اليه", "confidence": "high|medium|low"},
   "amount": {"value": 0, "confidence": "high|medium|low"}
 }
-
 قواعد صارمة:
-- إذا كان أي رقم غير واضح تمامًا، اكتب أفضل قراءة ممكنة لكن ضع confidence = "low" لذلك الحقل فقط (لا تترك القيمة فارغة لمجرد عدم اليقين).
-- لا تخلط أبدًا بين "من حساب" و"الى حساب" — تحقق من العمود الصحيح لكل رقم.
-- amount يجب أن يكون رقمًا عشريًا صافيًا بدون فواصل آلاف (مثال: 15000.00 وليس "15,000.00").
-- إذا لم تكن الصورة إيصال تحويل بنكي أصلًا، اجعل is_receipt = false واترك باقي الحقول null.`;
+- amount يجب أن يكون رقمًا عشريًا صافيًا بدون فواصل آلاف (مثال: 1320000.00).
+- إذا لم تكن الصورة إيصال تحويل بنكي، اجعل is_receipt = false.`;
 
-const SUPPORTED_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    const base64Data = buffer.toString('base64');
 
-async function extractReceiptDataAI(buffer, mimetype) {
-    if (!anthropic) return null;
-    const media_type = SUPPORTED_MIME.includes(mimetype) ? mimetype : 'image/jpeg';
-    const base64 = buffer.toString('base64');
-
-    const response = await anthropic.messages.create({
-        model: VISION_MODEL,
-        max_tokens: 700,
-        temperature: 0,
-        system: EXTRACTION_SYSTEM_PROMPT,
-        messages: [{
-            role: 'user',
-            content: [
-                { type: 'image', source: { type: 'base64', media_type, data: base64 } },
-                { type: 'text', text: 'استخرج بيانات هذا الإيصال بصيغة JSON فقط، بدون أي نص إضافي.' }
-            ]
-        }]
+    const response = await ai.models.generateContent({
+        model: 'gemini-1.5-flash',
+        contents: [
+            {
+                inlineData: {
+                    mimeType: mimetype || 'image/jpeg',
+                    data: base64Data
+                }
+            },
+            { text: prompt }
+        ]
     });
 
-    const raw = response.content
-        .filter(b => b.type === 'text')
-        .map(b => b.text)
-        .join('')
-        .trim();
-
-    const cleaned = raw.replace(/^```json\s*|^```\s*|```\s*$/gm, '').trim();
-    return JSON.parse(cleaned);
+    let raw = response.text().trim();
+    raw = raw.replace(/^```json\s*|^```\s*|```\s*$/gm, '').trim();
+    return JSON.parse(raw);
 }
 
-// -------------------- OCR احتياطي (يعمل فقط عند غياب مفتاح الـ API أو فشل الاتصال) --------------------
-
-async function preprocessForOCR(buffer) {
-    if (!sharp) return buffer;
-    try {
-        return await sharp(buffer)
-            .resize({ width: 1600 })
-            .greyscale()
-            .normalize()
-            .sharpen()
-            .toBuffer();
-    } catch {
-        return buffer;
-    }
-}
+// -------------------- مسار Tesseract الاحتياطي --------------------
 
 function legacyFindAccount(text) {
     const cleanText = text.replace(/[^0-9]/g, '');
@@ -255,14 +207,6 @@ function legacyExtractAmount(text) {
         parsed = parsed.filter(n => n > 0 && n < 100000000);
         if (parsed.length > 0) return Math.max(...parsed);
     }
-    const rawNums = text.match(/\b\d{5,}\b/g);
-    if (rawNums) {
-        let parsedRaw = rawNums.map(n => parseFloat(n)).filter(n => !isNaN(n) && n < 100000000 && n > 100);
-        if (parsedRaw.length > 0) {
-            let valid = parsedRaw.filter(n => n.toString().length < 10);
-            if (valid.length > 0) return Math.max(...valid);
-        }
-    }
     return null;
 }
 
@@ -272,7 +216,7 @@ let botActive = false;
 let targetGroupId = null;
 let sock = null;
 let isCronScheduled = false;
-const pendingByGroup = {}; // عناصر بانتظار تأكيد يدوي، حسب المجموعة (ملاحظة: تُفقد عند إعادة تشغيل السيرفر)
+const pendingByGroup = {};
 
 async function sendMsg(jid, text) {
     await sock.sendMessage(jid, { text });
@@ -290,43 +234,40 @@ function scheduleReport() {
     isCronScheduled = true;
 }
 
-// -------------------- معالجة إيصال واحد --------------------
+// -------------------- معالجة الصورة --------------------
 
 async function handleReceiptImage(groupId, msg, imgMsg) {
-    await sendMsg(groupId, 'جاري قراءة الإيصال...');
+    await sendMsg(groupId, 'جاري قراءة الإيصال بذكاء (Gemini)...');
 
     const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
 
     let parsed = null;
-    let usedAI = false;
+    let usedGemini = false;
 
-    if (anthropic) {
+    if (ai) {
         try {
-            parsed = await extractReceiptDataAI(buffer, imgMsg.mimetype);
-            usedAI = true;
-        } catch (aiErr) {
-            console.error('خطأ في الاستخراج بالذكاء الاصطناعي، سيتم استخدام OCR الاحتياطي:', aiErr.message);
+            parsed = await extractReceiptDataGemini(buffer, imgMsg.mimetype);
+            usedGemini = true;
+        } catch (err) {
+            console.error('خطأ في استخراج Gemini، التحويل للاحتياطي:', err.message);
         }
     }
 
-    if (usedAI && parsed && parsed.is_receipt === false) {
-        await sendMsg(groupId,
-            '⚠️ لم أستطع التأكد أن هذه الصورة إيصال تحويل واضح. تأكد من وضوح الصورة، ' +
-            'أو سجّل العملية يدويًا: /اضف <اسم الحساب> <المبلغ>'
-        );
+    if (usedGemini && parsed && parsed.is_receipt === false) {
+        await sendMsg(groupId, '⚠️ لم أستطع التأكد أن هذه الصورة إيصال تحويل واضح. سجّل العملية يدويًا: /اضف <اسم الحساب> <المبلغ>');
         return;
     }
 
-    if (usedAI && parsed) {
-        const txId = parsed.transaction_id && parsed.transaction_id.value;
-        const fromRaw = parsed.from_account && parsed.from_account.value;
-        const toRaw = parsed.to_account && parsed.to_account.value;
-        const fromConf = parsed.from_account && parsed.from_account.confidence;
-        const toConf = parsed.to_account && parsed.to_account.confidence;
-        const rawAmount = parsed.amount && parsed.amount.value;
-        const amountConf = parsed.amount && parsed.amount.confidence;
-        const recipientName = (parsed.recipient_name && parsed.recipient_name.value) || '';
-        const dateTime = (parsed.date_time && parsed.date_time.value) || '';
+    if (usedGemini && parsed) {
+        const txId = parsed.transaction_id?.value;
+        const fromRaw = parsed.from_account?.value;
+        const toRaw = parsed.to_account?.value;
+        const fromConf = parsed.from_account?.confidence;
+        const toConf = parsed.to_account?.confidence;
+        const rawAmount = parsed.amount?.value;
+        const amountConf = parsed.amount?.confidence;
+        const recipientName = parsed.recipient_name?.value || '';
+        const dateTime = parsed.date_time?.value || '';
 
         const amountVal = typeof rawAmount === 'number' ? rawAmount : parseFloat(String(rawAmount || '').replace(/,/g, ''));
         const matchRaw = MATCH_FIELD === 'to' ? toRaw : fromRaw;
@@ -335,7 +276,7 @@ async function handleReceiptImage(groupId, msg, imgMsg) {
         let data = loadData();
         data = resetIfNewDay(data);
         if (txId && data.processedTxIds.includes(txId)) {
-            await sendMsg(groupId, '⚠️ العملية رقم ' + txId + ' مسجّلة مسبقًا اليوم، تم تجاهل التكرار.');
+            await sendMsg(groupId, '⚠️ العملية رقم ' + txId + ' مسجّلة مسبقًا اليوم.');
             return;
         }
 
@@ -346,7 +287,7 @@ async function handleReceiptImage(groupId, msg, imgMsg) {
         if (exactMatch && isAmountOk && isHighConfidence) {
             const updated = creditAccount(exactMatch, amountVal, txId);
             await sendMsg(groupId,
-                '✅ تم التسجيل بنجاح!\n' +
+                '✅ تم التسجيل بنجاح عبر الذكاء الاصطناعي!\n' +
                 '👤 ' + exactMatch.name + '\n' +
                 '💰 المبلغ: ' + amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
                 '📊 إجمالي اليوم: ' + updated.totals[exactMatch.number].toLocaleString('en-US', { minimumFractionDigits: 2 })
@@ -354,7 +295,6 @@ async function handleReceiptImage(groupId, msg, imgMsg) {
             return;
         }
 
-        // أي شيء أقل من تطابق تام + ثقة عالية => لا تسجيل تلقائي، تأكيد يدوي فقط
         const suggestions = findClosestAccounts(matchRaw, 2);
         pendingByGroup[groupId] = { txId, amountVal: isAmountOk ? amountVal : null, matchRaw, suggestions, ts: Date.now() };
 
@@ -363,35 +303,29 @@ async function handleReceiptImage(groupId, msg, imgMsg) {
         if (txId) out += 'رقم العملية: ' + txId + '\n';
         out += 'المبلغ المقروء: ' + (isAmountOk ? amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 }) : 'غير واضح') + '\n';
         out += 'رقم الحساب المقروء: ' + (matchRaw || 'غير واضح') + '\n';
-        if (recipientName) out += 'الاسم في الإيصال: ' + recipientName + '\n';
+        if (recipientName) out += 'الاسم: ' + recipientName + '\n';
 
         if (suggestions.length) {
-            out += '\nأقرب الحسابات المسجّلة:\n';
+            out += '\nأقرب الحسابات:\n';
             suggestions.forEach((s, i) => { out += (i + 1) + ') ' + s.acc.name + '\n'; });
-            out += '\nللتأكيد أرسل رقم الاختيار (1 أو 2).';
+            out += '\nأرسل رقم الاختيار (1 أو 2) للتأكيد.';
         }
-        out += '\nأو للتسجيل اليدوي: /اضف <اسم الحساب> <المبلغ>';
         await sendMsg(groupId, out);
         return;
     }
 
-    // مسار احتياطي بالكامل: OCR تقليدي (فقط إذا لم يتوفر مفتاح API أو فشل الاستدعاء)
-    const preBuffer = await preprocessForOCR(buffer);
-    const { data: { text: ocrText } } = await Tesseract.recognize(preBuffer, 'ara+eng');
+    const { data: { text: ocrText } } = await Tesseract.recognize(buffer, 'ara+eng');
     const legacyAccount = legacyFindAccount(ocrText);
     const legacyAmount = legacyExtractAmount(ocrText);
 
     if (!legacyAccount || !legacyAmount) {
-        await sendMsg(groupId,
-            '⚠️ لم أتمكن من استخراج الحساب أو المبلغ بدقة. تأكد من وضوح صورة الإيصال، ' +
-            'أو سجّلها يدويًا: /اضف <اسم الحساب> <المبلغ>'
-        );
+        await sendMsg(groupId, '⚠️ لم أتمكن من القراءة بدقة. استخدم: /اضف <اسم الحساب> <المبلغ>');
         return;
     }
 
     const updated = creditAccount(legacyAccount, legacyAmount, null);
     await sendMsg(groupId,
-        '✅ تم التسجيل (عبر OCR الاحتياطي — يُنصح بالمراجعة اليدوية)!\n' +
+        '✅ تم التسجيل (عبر نظام OCR الاحتياطي):\n' +
         '👤 ' + legacyAccount.name + '\n' +
         '💰 المبلغ: ' + legacyAmount.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
         '📊 إجمالي اليوم: ' + updated.totals[legacyAccount.number].toLocaleString('en-US', { minimumFractionDigits: 2 })
@@ -417,7 +351,7 @@ async function startBot() {
         if (qr) {
             console.log('\n========================================');
             console.log('امسح QR Code من الرابط التالي عبر المتصفح:');
-            console.log(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`);
+            console.log(`[https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=$](https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=$){encodeURIComponent(qr)}`);
             console.log('========================================\n');
             qrcode.generate(qr, { small: true });
         }
@@ -441,9 +375,7 @@ async function startBot() {
             if (text === '/بدا') {
                 botActive = true;
                 targetGroupId = groupId;
-                await sendMsg(groupId, 'البوت شغال ' +
-                    (anthropic ? '(قراءة ذكية عبر AI)' : '(OCR تقليدي - يُفضّل ضبط ANTHROPIC_API_KEY لدقة أعلى)') +
-                    ' وجاهز!');
+                await sendMsg(groupId, 'البوت شغال ' + (ai ? '(قراءة ذكية عبر Google Gemini المجاني)' : '(OCR تقليدي)') + ' وجاهز!');
                 continue;
             }
             if (text === '/توقف') {
@@ -466,7 +398,6 @@ async function startBot() {
 
             if (!botActive || groupId !== targetGroupId) continue;
 
-            // تأكيد يدوي برقم (1 أو 2) أو "تأكيد 1" لعنصر معلّق بانتظار مراجعة
             const confirmMatch = text.match(/^(?:تأكيد\s*)?([12])$/);
             if (confirmMatch && pendingByGroup[groupId]) {
                 const pending = pendingByGroup[groupId];
@@ -479,7 +410,7 @@ async function startBot() {
                         const updated = creditAccount(chosen.acc, pending.amountVal, pending.txId);
                         await sendMsg(groupId,
                             '✅ تم تسجيل ' + pending.amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 }) +
-                            ' لحساب ' + chosen.acc.name + ' بعد التأكيد اليدوي.\n' +
+                            ' لحساب ' + chosen.acc.name + ' بنجاح.\n' +
                             '📊 إجمالي اليوم: ' + updated.totals[chosen.acc.number].toLocaleString('en-US', { minimumFractionDigits: 2 })
                         );
                         delete pendingByGroup[groupId];
@@ -488,7 +419,6 @@ async function startBot() {
                 }
             }
 
-            // إضافة/تصحيح يدوي: /اضف <اسم الحساب> <المبلغ>
             if (text.startsWith('/اضف')) {
                 const parts = text.split(/\s+/).filter(Boolean);
                 if (parts.length >= 3) {
@@ -509,13 +439,9 @@ async function startBot() {
                             '📊 إجمالي اليوم: ' + updated.totals[acc.number].toLocaleString('en-US', { minimumFractionDigits: 2 })
                         );
                         delete pendingByGroup[groupId];
-                    } else if (candidates.length > 1) {
-                        await sendMsg(groupId, 'أكثر من حساب مطابق للاسم: ' + candidates.map(a => a.name).join('، ') + '\nاكتب الاسم كاملاً وبدقة لتفادي الالتباس.');
                     } else {
-                        await sendMsg(groupId, 'تعذر إيجاد الحساب أو فهم المبلغ. الصيغة: /اضف <اسم الحساب كامل> <المبلغ>');
+                        await sendMsg(groupId, 'تعذر إيجاد الحساب. الصيغة الصحيحة: /اضف <اسم الحساب> <المبلغ>');
                     }
-                } else {
-                    await sendMsg(groupId, 'الصيغة الصحيحة: /اضف <اسم الحساب> <المبلغ>');
                 }
                 continue;
             }
