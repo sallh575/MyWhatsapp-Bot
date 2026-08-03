@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً عبر OpenRouter Vision API
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة النهائية المضمونة عبر OpenRouter
  */
 
 const { 
@@ -30,7 +30,6 @@ const ACCOUNTS = [
     { name: 'محمد فتح الرحمن',  number: '0563034575990001' },
 ];
 
-// مفتاح OpenRouter API
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 
 // -------------------- إدارة البيانات اليومية --------------------
@@ -90,7 +89,7 @@ function creditAccount(acc, amount, txId) {
     return data;
 }
 
-// -------------------- تنظيف الأرقام والمطابقة الذكية --------------------
+// -------------------- المطابقة الذكية --------------------
 
 function normalizeDigits(str) {
     if (!str) return '';
@@ -106,7 +105,6 @@ function findMatchingAccountByNumbers(fromNum, toNum) {
         const target = normalizeDigits(acc.number);
         const shortTarget = target.slice(-4);
 
-        // فحص الحقلين (من حساب وإلى حساب) بدقة تامة أو آخر 4 أرقام
         if (
             cleanFrom.includes(target) || target.includes(cleanFrom) || cleanFrom.slice(-4) === shortTarget ||
             cleanTo.includes(target) || target.includes(cleanTo) || cleanTo.slice(-4) === shortTarget
@@ -117,21 +115,21 @@ function findMatchingAccountByNumbers(fromNum, toNum) {
     return null;
 }
 
-// -------------------- قراءة الإيصال عبر OpenRouter Vision --------------------
+// -------------------- قراءة الإيصال الفائقة عبر OpenRouter --------------------
 
 async function readReceiptWithOpenRouter(buffer, mimetype) {
-    if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY is missing in environment variables!');
+    if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY مفقود في المتغيرات!');
 
     const base64Image = buffer.toString('base64');
     const mimeTypeStr = mimetype || 'image/jpeg';
 
-    const prompt = `أنت نظام ذكاء اصطناعي دقيق للغاية متخصص حصرياً في قراءة إيصالات التحويل البنكي السودانية (بنكك - بنك الخرطوم).
-قم بفحص الصورة بدقة واستخرج البيانات التالية وأرجعها بصيغة JSON نقي فقط بدون أي كلام خارجي أو تنسيق ماركداون:
+    const prompt = `أنت نظام ذكاء اصطناعي دقيق جداً لقراءة إيصالات بنكك السودانية.
+قم باستخراج البيانات التالية من الصورة وأرجعها حصرياً بصيغة JSON بدون أي كلام إضافي أو ماركداون:
 {
-  "transaction_id": "رقم العملية المكتوب في الإيصال (مثال: 20171567293)",
-  "from_account": "أرقام الحساب المحول منه المكتوبة تحت (من حساب)",
-  "to_account": "أرقام الحساب المحول إليه المكتوبة تحت (الى حساب)",
-  "amount": المبلغ الرقمي الدقيق كقيمة رقمية عادية بدون فواصل آلاف (مثال: 2000000.00)
+  "transaction_id": "رقم العملية (مثل 20171567293)",
+  "from_account": "رقم الحساب المحول منه تحت (من حساب)",
+  "to_account": "رقم الحساب المحول إليه تحت (الى حساب)",
+  "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة (مثل 2000000.00)
 }`;
 
     const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
@@ -139,11 +137,11 @@ async function readReceiptWithOpenRouter(buffer, mimetype) {
         headers: {
             "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
             "HTTP-Referer": "https://whatsapp-bot.railway.app",
-            "X-Title": "Bankak WhatsApp Bot",
+            "X-Title": "Bankak Bot",
             "Content-Type": "application/json"
         },
         body: JSON.stringify({
-            model: "google/gemini-2.5-flash", // أو يمكنك استبداله بـ "openai/gpt-4o-mini"
+            model: "openai/gpt-4o-mini",
             messages: [
                 {
                     role: "user",
@@ -151,28 +149,29 @@ async function readReceiptWithOpenRouter(buffer, mimetype) {
                         { type: "text", text: prompt },
                         {
                             type: "image_url",
-                            image_url: {
-                                url: `data:${mimeTypeStr};base64,${base64Image}`
-                            }
+                            image_url: { url: `data:${mimeTypeStr};base64,${base64Image}` }
                         }
                     ]
                 }
-            ],
-            response_format: { type: "json_object" }
+            ]
         })
     });
 
     if (!response.ok) {
         const errText = await response.text();
-        throw new Error(`OpenRouter API Error: ${response.status} - ${errText}`);
+        throw new Error(`OpenRouter HTTP Error ${response.status}: ${errText}`);
     }
 
     const data = await response.json();
-    const content = data.choices[0].message.content;
+    let content = data.choices[0].message.content.trim();
     
-    // تنظيف النتيجة لضمان الحصول على JSON صحيح
-    const cleanedJson = content.replace(/```json/g, '').replace(/```/g, '').trim();
-    return JSON.parse(cleanedJson);
+    // استخراج الكود البرمجي JSON بدقة مهما كان رد النموذج
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+        throw new Error('لم يعيد النموذج صيغة JSON صحيحة. الرد كان: ' + content);
+    }
+
+    return JSON.parse(jsonMatch[0]);
 }
 
 // -------------------- حالة البوت --------------------
@@ -193,7 +192,6 @@ function scheduleReport() {
         let data = loadData();
         await sendMsg(targetGroupId, buildReport(data));
         saveData(initData());
-        console.log('تم إرسال التقرير اليومي التلقائي');
     }, { timezone: 'Africa/Khartoum' });
     isCronScheduled = true;
 }
@@ -224,7 +222,7 @@ async function startBot() {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
-            console.log('البوت متصل وجاهز للعمل عبر OpenRouter!');
+            console.log('البوت متصل وجاهز للعمل!');
             scheduleReport();
         }
     });
@@ -240,12 +238,12 @@ async function startBot() {
             if (text === '/بدا') {
                 botActive = true;
                 targetGroupId = groupId;
-                await sendMsg(groupId, '🤖 تم تفعيل البوت بنجاح وهو جاهز لقراءة الإيصالات عبر الذكاء الاصطناعي!');
+                await sendMsg(groupId, '🤖 تم تفعيل البوت بنجاح!');
                 continue;
             }
             if (text === '/توقف') {
                 botActive = false;
-                await sendMsg(groupId, '🛑 تم إيقاف البوت مؤقتاً.');
+                await sendMsg(groupId, '🛑 تم إيقاف البوت.');
                 continue;
             }
             if (text === '/تقرير') {
@@ -262,7 +260,6 @@ async function startBot() {
 
             if (!botActive || groupId !== targetGroupId) continue;
 
-            // الإضافة اليدوية الاحتياطية
             if (text.startsWith('/اضف')) {
                 const parts = text.split(/\s+/).filter(Boolean);
                 if (parts.length >= 3) {
@@ -294,7 +291,7 @@ async function startBot() {
             const imgMsg = msg.message.imageMessage;
             if (!imgMsg) continue;
 
-            await sendMsg(groupId, '🔄 جاري قراءة الإيصال وتحليله عبر OpenRouter...');
+            await sendMsg(groupId, '🔄 جاري قراءة الإيصال...');
 
             try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
@@ -308,13 +305,11 @@ async function startBot() {
                 let data = loadData();
                 data = resetIfNewDay(data);
 
-                // فحص تكرار رقم العملية لمنع التكرار
                 if (txId && data.processedTxIds && data.processedTxIds.includes(txId)) {
                     await sendMsg(groupId, '⚠️ العملية رقم ' + txId + ' مسجّلة مسبقاً اليوم ولم يتم تكرارها.');
                     continue;
                 }
 
-                // مطابقة الحساب
                 const matchedAcc = findMatchingAccountByNumbers(fromAcc, toAcc);
 
                 if (matchedAcc && !isNaN(amountVal) && amountVal > 0) {
@@ -328,16 +323,16 @@ async function startBot() {
                     );
                 } else {
                     await sendMsg(groupId, 
-                        '⚠️ تم قراءة الإيصال لكن رقم الحساب غير مطابق لحساباتنا.\n' +
-                        'من حساب: ' + (fromAcc || 'غير واضح') + '\n' +
-                        'الى حساب: ' + (toAcc || 'غير واضح') + '\n' +
+                        '⚠️ قُرئ الإيصال لكن رقم الحساب غير مطابق لحساباتك.\n' +
+                        'من: ' + (fromAcc || 'غير واضح') + '\n' +
+                        'إلى: ' + (toAcc || 'غير واضح') + '\n' +
                         'المبلغ: ' + (amountVal || 'غير واضح')
                     );
                 }
 
             } catch (err) {
-                console.error('خطأ قراءة الإيصال:', err);
-                await sendMsg(groupId, '❌ حدث خطأ تقني أثناء تحليل الإيصال عبر OpenRouter.');
+                console.error('خطأ قراءة الإيصال المفصل:', err);
+                await sendMsg(groupId, '❌ خطأ تقني: ' + err.message);
             }
         }
     });
@@ -348,7 +343,7 @@ startBot();
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.write('سيرفر بوت الواتساب يعمل بنجاح على Railway!');
+    res.write('سيرفر بوت الواتساب يعمل بنجاح!');
     res.end();
 }).listen(PORT, () => {
     console.log(`Web Server is running on port ${PORT}`);
