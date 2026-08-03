@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المصححة نهائياً للمطابقة
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة النهائية بدون رسالة الانتظار
  */
 
 const { 
@@ -101,10 +101,9 @@ function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
     const cleanFrom = normalizeDigits(fromNum);
     const cleanTo = normalizeDigits(toNum);
 
-    // 1. البحث عبر الأجزاء الفريدة للحساب (استبعاد الـ 0001 المشتركة في النهاية والتركيز على أول 12 رقم أو الجزء الأوسط)
     for (const acc of ACCOUNTS) {
         const target = normalizeDigits(acc.number);
-        const coreTarget = target.slice(0, -4); // الجزء الفريد الحقيقي قبل الـ 0001
+        const coreTarget = target.slice(0, -4);
 
         if (
             cleanFrom.includes(target) || cleanTo.includes(target) ||
@@ -114,7 +113,6 @@ function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
         }
     }
 
-    // 2. مطابقة احتياطية عبر اسم صاحب الحساب الظاهر في الإيصال
     for (const acc of ACCOUNTS) {
         if (senderNameText && senderNameText.includes(acc.name)) {
             return acc;
@@ -300,7 +298,7 @@ async function startBot() {
             const imgMsg = msg.message.imageMessage;
             if (!imgMsg) continue;
 
-            await sendMsg(groupId, '🔄 جاري قراءة الإيصال...');
+            // تم إزالة رسالة "جاري قراءة الإيصال..." من هنا نهائياً
 
             try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
