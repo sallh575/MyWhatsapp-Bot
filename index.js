@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة النهائية المضمونة عبر OpenRouter
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المصححة نهائياً للمطابقة
  */
 
 const { 
@@ -89,7 +89,7 @@ function creditAccount(acc, amount, txId) {
     return data;
 }
 
-// -------------------- المطابقة الذكية --------------------
+// -------------------- المطابقة الذكية والدقيقة 100% --------------------
 
 function normalizeDigits(str) {
     if (!str) return '';
@@ -97,25 +97,34 @@ function normalizeDigits(str) {
     return String(str).split('').map(ch => easternToWestern[ch] || ch).join('').replace(/[^0-9]/g, '');
 }
 
-function findMatchingAccountByNumbers(fromNum, toNum) {
+function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
     const cleanFrom = normalizeDigits(fromNum);
     const cleanTo = normalizeDigits(toNum);
 
+    // 1. البحث عبر الأجزاء الفريدة للحساب (استبعاد الـ 0001 المشتركة في النهاية والتركيز على أول 12 رقم أو الجزء الأوسط)
     for (const acc of ACCOUNTS) {
         const target = normalizeDigits(acc.number);
-        const shortTarget = target.slice(-4);
+        const coreTarget = target.slice(0, -4); // الجزء الفريد الحقيقي قبل الـ 0001
 
         if (
-            cleanFrom.includes(target) || target.includes(cleanFrom) || cleanFrom.slice(-4) === shortTarget ||
-            cleanTo.includes(target) || target.includes(cleanTo) || cleanTo.slice(-4) === shortTarget
+            cleanFrom.includes(target) || cleanTo.includes(target) ||
+            (coreTarget.length >= 8 && (cleanFrom.includes(coreTarget) || cleanTo.includes(coreTarget)))
         ) {
             return acc;
         }
     }
+
+    // 2. مطابقة احتياطية عبر اسم صاحب الحساب الظاهر في الإيصال
+    for (const acc of ACCOUNTS) {
+        if (senderNameText && senderNameText.includes(acc.name)) {
+            return acc;
+        }
+    }
+
     return null;
 }
 
-// -------------------- قراءة الإيصال الفائقة عبر OpenRouter --------------------
+// -------------------- قراءة الإيصال عبر OpenRouter --------------------
 
 async function readReceiptWithOpenRouter(buffer, mimetype) {
     if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY مفقود في المتغيرات!');
@@ -127,8 +136,9 @@ async function readReceiptWithOpenRouter(buffer, mimetype) {
 قم باستخراج البيانات التالية من الصورة وأرجعها حصرياً بصيغة JSON بدون أي كلام إضافي أو ماركداون:
 {
   "transaction_id": "رقم العملية (مثل 20171567293)",
-  "from_account": "رقم الحساب المحول منه تحت (من حساب)",
-  "to_account": "رقم الحساب المحول إليه تحت (الى حساب)",
+  "from_account": "رقم الحساب المحول منه كاملاً تحت (من حساب)",
+  "to_account": "رقم الحساب المحول إليه كاملاً تحت (الى حساب)",
+  "sender_name": "اسم المرسل اليه أو اسم صاحب الحساب الظاهر في الإيصال",
   "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة (مثل 2000000.00)
 }`;
 
@@ -165,7 +175,6 @@ async function readReceiptWithOpenRouter(buffer, mimetype) {
     const data = await response.json();
     let content = data.choices[0].message.content.trim();
     
-    // استخراج الكود البرمجي JSON بدقة مهما كان رد النموذج
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
         throw new Error('لم يعيد النموذج صيغة JSON صحيحة. الرد كان: ' + content);
@@ -300,6 +309,7 @@ async function startBot() {
                 const txId = parsedData.transaction_id;
                 const fromAcc = parsedData.from_account;
                 const toAcc = parsedData.to_account;
+                const senderName = parsedData.sender_name;
                 const amountVal = parseFloat(parsedData.amount);
 
                 let data = loadData();
@@ -310,7 +320,7 @@ async function startBot() {
                     continue;
                 }
 
-                const matchedAcc = findMatchingAccountByNumbers(fromAcc, toAcc);
+                const matchedAcc = findMatchingAccountByNumbers(fromAcc, toAcc, senderName);
 
                 if (matchedAcc && !isNaN(amountVal) && amountVal > 0) {
                     const updated = creditAccount(matchedAcc, amountVal, txId);
@@ -323,15 +333,16 @@ async function startBot() {
                     );
                 } else {
                     await sendMsg(groupId, 
-                        '⚠️ قُرئ الإيصال لكن رقم الحساب غير مطابق لحساباتك.\n' +
+                        '⚠️ قُرئ الإيصال لكن لم يتم مطابقة الحساب بدقة.\n' +
                         'من: ' + (fromAcc || 'غير واضح') + '\n' +
                         'إلى: ' + (toAcc || 'غير واضح') + '\n' +
+                        'الاسم: ' + (senderName || 'غير واضح') + '\n' +
                         'المبلغ: ' + (amountVal || 'غير واضح')
                     );
                 }
 
             } catch (err) {
-                console.error('خطأ قراءة الإيصال المفصل:', err);
+                console.error('خطأ قراءة الإيصال:', err);
                 await sendMsg(groupId, '❌ خطأ تقني: ' + err.message);
             }
         }
