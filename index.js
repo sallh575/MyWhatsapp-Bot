@@ -1,23 +1,10 @@
 /**
- * بوت واتساب لتتبع التحويلات البنكية (بنكك - بنك الخرطوم)
+ * بوت واتساب لتتبع التحويلات البنكية (بنكك - بنك الخرطوم) - مُعدّل للعمل عبر OpenRouter
  * =========================================================
  * إعداد مطلوب قبل التشغيل:
- *  1) npm install @anthropic-ai/sdk sharp
- *     (sharp اختياري، يُستخدم فقط لتحسين مسار OCR الاحتياطي)
- *  2) متغير بيئة ANTHROPIC_API_KEY من console.anthropic.com
- *     - بدونه، يعمل البوت تلقائيًا بـ OCR التقليدي (Tesseract) الأقل دقة
- *  3) اختياري: CLAUDE_VISION_MODEL لتغيير النموذج (افتراضي: claude-sonnet-5)
- *  4) اختياري: MATCH_FIELD=to لمطابقة "الى حساب" بدل "من حساب" (الافتراضي: from)
- *
- * فكرة التصميم:
- *  - قراءة الإيصال تتم بنموذج رؤية (Claude) بدل Tesseract التقليدي، لأنه أدق
- *    بكثير مع جداول عربية على خلفيات ملونة.
- *  - المطابقة مع الحسابات الثمانية تتم بالكود (مطابقة رقمية تامة فقط) وليس
- *    بالنموذج، لتفادي أي "تخمين" من الذكاء الاصطناعي على حساب مختلف يشبه أحد
- *    حساباتكم.
- *  - أي حالة غير مؤكدة 100% (رقم غير واضح، أو لا يوجد تطابق تام) لا تُسجَّل
- *    تلقائيًا أبدًا — بل تُطرح على المجموعة للتأكيد اليدوي. هذا هو الضمان
- *    الحقيقي ضد الأخطاء، وليس فقط دقة القراءة.
+ *  1) npm install openai @whiskeysockets/baileys tesseract.js node-cron pino qrcode-terminal sharp
+ *  2) متغير بيئة OPENROUTER_API_KEY
+ *  3) اختياري: VISION_MODEL لتغيير النموذج (افتراضي: anthropic/claude-3.5-sonnet)
  */
 
 const {
@@ -34,9 +21,7 @@ const fs = require('fs');
 const path = require('path');
 const pino = require('pino');
 const http = require('http');
-
-let Anthropic = null;
-try { Anthropic = require('@anthropic-ai/sdk'); } catch (e) { /* لم تُثبَّت بعد */ }
+const OpenAI = require('openai');
 
 let sharp = null;
 try { sharp = require('sharp'); } catch (e) { /* لم تُثبَّت بعد */ }
@@ -48,23 +33,30 @@ const ACCOUNTS = [
     { name: 'فاطمه حسين',        number: '1003092849630001' },
     { name: 'حمد خضر',          number: '0273051189600001' },
     { name: 'نمارق عبد الباقي', number: '1003092849830001' },
-    { name: 'احمد عبد الباقي',  number: '1003077677580001' },
-    { name: 'عبد الباقي صالح',  number: '1003092849400001' },
-    { name: 'فتح الرحمن',       number: '1343036754470001' },
-    { name: 'خضر صالح',         number: '0273090788480001' },
-    { name: 'محمد فتح الرحمن',  number: '0563034575990001' },
+    { name: 'احمد عبد الباقي',   number: '1003077677580001' },
+    { name: 'عبد الباقي صالح',   number: '1003092849400001' },
+    { name: 'فتح الرحمن',        number: '1343036754470001' },
+    { name: 'خضر صالح',          number: '0273090788480001' },
+    { name: 'محمد فتح الرحمن',   number: '0563034575990001' },
 ];
 
-// أي حقل من الإيصال يُطابَق مع قائمة الحسابات: المرسل (from) أو المستلم (to)
 const MATCH_FIELD = (process.env.MATCH_FIELD || 'from').toLowerCase() === 'to' ? 'to' : 'from';
 
-const VISION_MODEL = process.env.CLAUDE_VISION_MODEL || 'claude-sonnet-5';
-const anthropic = (Anthropic && process.env.ANTHROPIC_API_KEY)
-    ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY })
-    : null;
+// استخدام OpenRouter بدلاً من Anthropic المباشر
+const VISION_MODEL = process.env.VISION_MODEL || 'anthropic/claude-3.5-sonnet';
+const openrouterApiKey = process.env.OPENROUTER_API_KEY;
 
-if (!anthropic) {
-    console.warn('⚠️  ANTHROPIC_API_KEY غير مضبوط (أو المكتبة غير مثبتة) — سيعمل البوت بـ OCR تقليدي أقل دقة.');
+const aiClient = openrouterApiKey ? new OpenAI({
+    baseURL: 'https://openrouter.ai/api/v1',
+    apiKey: openrouterApiKey,
+    defaultHeaders: {
+        'HTTP-Referer': 'https://github.com/free-claude-code',
+        'X-Title': 'WhatsApp Banking Bot'
+    }
+}) : null;
+
+if (!aiClient) {
+    console.warn('⚠️ OPENROUTER_API_KEY غير مضبوط — سيعمل البوت بـ OCR تقليدي أقل دقة.');
 }
 
 // -------------------- تخزين البيانات اليومية --------------------
@@ -124,7 +116,7 @@ function creditAccount(acc, amount, txId) {
     return data;
 }
 
-// -------------------- أدوات مطابقة الحسابات (تتم في الكود، ليس بالنموذج) --------------------
+// -------------------- أدوات مطابقة الحسابات --------------------
 
 function normalizeDigits(str) {
     if (!str) return '';
@@ -132,7 +124,6 @@ function normalizeDigits(str) {
     return String(str).split('').map(ch => easternToWestern[ch] || ch).join('').replace(/[^0-9]/g, '');
 }
 
-// مطابقة تامة فقط — هذه هي الحالة الوحيدة التي تُسجَّل تلقائيًا
 function matchAccountExact(numStr) {
     const clean = normalizeDigits(numStr);
     if (!clean) return null;
@@ -154,7 +145,6 @@ function levenshtein(a, b) {
     return dp[m][n];
 }
 
-// اقتراحات فقط (لعرضها على البشر) — لا تُستخدم أبدًا للتسجيل التلقائي
 function findClosestAccounts(numStr, limit = 2) {
     const clean = normalizeDigits(numStr);
     if (!clean) return [];
@@ -165,7 +155,7 @@ function findClosestAccounts(numStr, limit = 2) {
         .filter(x => x.dist <= 3);
 }
 
-// -------------------- الاستخراج عبر Claude Vision --------------------
+// -------------------- الاستخراج عبر OpenRouter Vision --------------------
 
 const EXTRACTION_SYSTEM_PROMPT = `أنت أداة استخراج بيانات دقيقة لإيصالات تحويل بنكي سودانية (تطبيق بنكك - بنك الخرطوم).
 الجدول في الصورة باللغة العربية ومرتب من اليمين لليسار: اسم الحقل على اليمين، والقيمة على اليسار في نفس الصف.
@@ -184,43 +174,40 @@ const EXTRACTION_SYSTEM_PROMPT = `أنت أداة استخراج بيانات د
 }
 
 قواعد صارمة:
-- إذا كان أي رقم غير واضح تمامًا، اكتب أفضل قراءة ممكنة لكن ضع confidence = "low" لذلك الحقل فقط (لا تترك القيمة فارغة لمجرد عدم اليقين).
-- لا تخلط أبدًا بين "من حساب" و"الى حساب" — تحقق من العمود الصحيح لكل رقم.
-- amount يجب أن يكون رقمًا عشريًا صافيًا بدون فواصل آلاف (مثال: 15000.00 وليس "15,000.00").
+- إذا كان أي رقم غير واضح تمامًا، اكتب أفضل قراءة ممكنة لكن ضع confidence = "low" لذلك الحقل فقط.
+- لا تخلط أبدًا بين "من حساب" و"الى حساب".
+- amount يجب أن يكون رقمًا عشريًا صافيًا بدون فواصل آلاف (مثال: 15000.00).
 - إذا لم تكن الصورة إيصال تحويل بنكي أصلًا، اجعل is_receipt = false واترك باقي الحقول null.`;
 
 const SUPPORTED_MIME = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
 async function extractReceiptDataAI(buffer, mimetype) {
-    if (!anthropic) return null;
+    if (!aiClient) return null;
     const media_type = SUPPORTED_MIME.includes(mimetype) ? mimetype : 'image/jpeg';
     const base64 = buffer.toString('base64');
 
-    const response = await anthropic.messages.create({
+    const response = await aiClient.chat.completions.create({
         model: VISION_MODEL,
-        max_tokens: 700,
         temperature: 0,
-        system: EXTRACTION_SYSTEM_PROMPT,
-        messages: [{
-            role: 'user',
-            content: [
-                { type: 'image', source: { type: 'base64', media_type, data: base64 } },
-                { type: 'text', text: 'استخرج بيانات هذا الإيصال بصيغة JSON فقط، بدون أي نص إضافي.' }
-            ]
-        }]
+        response_format: { type: "json_object" },
+        messages: [
+            { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
+            {
+                role: "user",
+                content: [
+                    { type: "text", text: "استخرج بيانات هذا الإيصال بصيغة JSON فقط." },
+                    { type: "image_url", image_url: { url: `data:${media_type};base64,${base64}` } }
+                ]
+            }
+        ]
     });
 
-    const raw = response.content
-        .filter(b => b.type === 'text')
-        .map(b => b.text)
-        .join('')
-        .trim();
-
+    const raw = response.choices[0].message.content.trim();
     const cleaned = raw.replace(/^```json\s*|^```\s*|```\s*$/gm, '').trim();
     return JSON.parse(cleaned);
 }
 
-// -------------------- OCR احتياطي (يعمل فقط عند غياب مفتاح الـ API أو فشل الاتصال) --------------------
+// -------------------- OCR احتياطي --------------------
 
 async function preprocessForOCR(buffer) {
     if (!sharp) return buffer;
@@ -272,7 +259,7 @@ let botActive = false;
 let targetGroupId = null;
 let sock = null;
 let isCronScheduled = false;
-const pendingByGroup = {}; // عناصر بانتظار تأكيد يدوي، حسب المجموعة (ملاحظة: تُفقد عند إعادة تشغيل السيرفر)
+const pendingByGroup = {};
 
 async function sendMsg(jid, text) {
     await sock.sendMessage(jid, { text });
@@ -300,12 +287,12 @@ async function handleReceiptImage(groupId, msg, imgMsg) {
     let parsed = null;
     let usedAI = false;
 
-    if (anthropic) {
+    if (aiClient) {
         try {
             parsed = await extractReceiptDataAI(buffer, imgMsg.mimetype);
             usedAI = true;
         } catch (aiErr) {
-            console.error('خطأ في الاستخراج بالذكاء الاصطناعي، سيتم استخدام OCR الاحتياطي:', aiErr.message);
+            console.error('خطأ في الاستخراج عبر OpenRouter، سيتم استخدام OCR الاحتياطي:', aiErr.message);
         }
     }
 
@@ -354,7 +341,6 @@ async function handleReceiptImage(groupId, msg, imgMsg) {
             return;
         }
 
-        // أي شيء أقل من تطابق تام + ثقة عالية => لا تسجيل تلقائي، تأكيد يدوي فقط
         const suggestions = findClosestAccounts(matchRaw, 2);
         pendingByGroup[groupId] = { txId, amountVal: isAmountOk ? amountVal : null, matchRaw, suggestions, ts: Date.now() };
 
@@ -375,7 +361,7 @@ async function handleReceiptImage(groupId, msg, imgMsg) {
         return;
     }
 
-    // مسار احتياطي بالكامل: OCR تقليدي (فقط إذا لم يتوفر مفتاح API أو فشل الاستدعاء)
+    // مسار احتياطي OCR تقليدي
     const preBuffer = await preprocessForOCR(buffer);
     const { data: { text: ocrText } } = await Tesseract.recognize(preBuffer, 'ara+eng');
     const legacyAccount = legacyFindAccount(ocrText);
@@ -417,7 +403,7 @@ async function startBot() {
         if (qr) {
             console.log('\n========================================');
             console.log('امسح QR Code من الرابط التالي عبر المتصفح:');
-            console.log(`https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qr)}`);
+            console.log(`[https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=$](https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=$){encodeURIComponent(qr)}`);
             console.log('========================================\n');
             qrcode.generate(qr, { small: true });
         }
@@ -442,7 +428,7 @@ async function startBot() {
                 botActive = true;
                 targetGroupId = groupId;
                 await sendMsg(groupId, 'البوت شغال ' +
-                    (anthropic ? '(قراءة ذكية عبر AI)' : '(OCR تقليدي - يُفضّل ضبط ANTHROPIC_API_KEY لدقة أعلى)') +
+                    (aiClient ? '(قراءة ذكية عبر OpenRouter AI)' : '(OCR تقليدي - يُفضّل ضبط OPENROUTER_API_KEY)') +
                     ' وجاهز!');
                 continue;
             }
@@ -466,7 +452,6 @@ async function startBot() {
 
             if (!botActive || groupId !== targetGroupId) continue;
 
-            // تأكيد يدوي برقم (1 أو 2) أو "تأكيد 1" لعنصر معلّق بانتظار مراجعة
             const confirmMatch = text.match(/^(?:تأكيد\s*)?([12])$/);
             if (confirmMatch && pendingByGroup[groupId]) {
                 const pending = pendingByGroup[groupId];
@@ -488,7 +473,6 @@ async function startBot() {
                 }
             }
 
-            // إضافة/تصحيح يدوي: /اضف <اسم الحساب> <المبلغ>
             if (text.startsWith('/اضف')) {
                 const parts = text.split(/\s+/).filter(Boolean);
                 if (parts.length >= 3) {
@@ -538,7 +522,7 @@ startBot();
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.write('بوت الواتساب يعمل بنجاح على Railway!');
+    res.write('بوت الواتساب يعمل بنجاح عبر OpenRouter!');
     res.end();
 }).listen(PORT, () => {
     console.log(`Web Server is running on port ${PORT}`);
