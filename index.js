@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة النهائية بدون رسالة الانتظار
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المعدلة لتقليل استهلاك التوكنز
  */
 
 const { 
@@ -150,6 +150,7 @@ async function readReceiptWithOpenRouter(buffer, mimetype) {
         },
         body: JSON.stringify({
             model: "openai/gpt-4o-mini",
+            max_tokens: 1000, // تحديد الحد الأقصى لمنع استهلاك الرصيد العالي
             messages: [
                 {
                     role: "user",
@@ -297,8 +298,6 @@ async function startBot() {
 
             const imgMsg = msg.message.imageMessage;
             if (!imgMsg) continue;
-
-            // تم إزالة رسالة "جاري قراءة الإيصال..." من هنا نهائياً
 
             try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
