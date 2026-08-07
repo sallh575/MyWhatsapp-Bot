@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المعدلة لتقليل استهلاك التوكنز
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المباشرة لنموذج Claude (Anthropic API)
  */
 
 const { 
@@ -30,7 +30,7 @@ const ACCOUNTS = [
     { name: 'محمد فتح الرحمن',  number: '0563034575990001' },
 ];
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 
 // -------------------- إدارة البيانات اليومية --------------------
 
@@ -122,10 +122,10 @@ function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
     return null;
 }
 
-// -------------------- قراءة الإيصال عبر OpenRouter --------------------
+// -------------------- قراءة الإيصال عبر Claude (Anthropic API) مباشرة --------------------
 
-async function readReceiptWithOpenRouter(buffer, mimetype) {
-    if (!OPENROUTER_API_KEY) throw new Error('OPENROUTER_API_KEY مفقود في المتغيرات!');
+async function readReceiptWithClaude(buffer, mimetype) {
+    if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY مفقود في المتغيرات!');
 
     const base64Image = buffer.toString('base64');
     const mimeTypeStr = mimetype || 'image/jpeg';
@@ -140,25 +140,31 @@ async function readReceiptWithOpenRouter(buffer, mimetype) {
   "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة (مثل 2000000.00)
 }`;
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
-            "Authorization": `Bearer ${OPENROUTER_API_KEY}`,
-            "HTTP-Referer": "https://whatsapp-bot.railway.app",
-            "X-Title": "Bankak Bot",
-            "Content-Type": "application/json"
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
         },
         body: JSON.stringify({
-            model: "openai/gpt-4o-mini",
-            max_tokens: 1000, // تحديد الحد الأقصى لمنع استهلاك الرصيد العالي
+            model: "claude-3-5-sonnet-20241022",
+            max_tokens: 1000,
             messages: [
                 {
                     role: "user",
                     content: [
-                        { type: "text", text: prompt },
                         {
-                            type: "image_url",
-                            image_url: { url: `data:${mimeTypeStr};base64,${base64Image}` }
+                            type: "image",
+                            source: {
+                                type: "base64",
+                                media_type: mimeTypeStr,
+                                data: base64Image
+                            }
+                        },
+                        {
+                            type: "text",
+                            text: prompt
                         }
                     ]
                 }
@@ -168,11 +174,11 @@ async function readReceiptWithOpenRouter(buffer, mimetype) {
 
     if (!response.ok) {
         const errText = await response.text();
-        throw new Error(`OpenRouter HTTP Error ${response.status}: ${errText}`);
+        throw new Error(`Anthropic HTTP Error ${response.status}: ${errText}`);
     }
 
     const data = await response.json();
-    let content = data.choices[0].message.content.trim();
+    let content = data.content[0].text.trim();
     
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
@@ -230,7 +236,7 @@ async function startBot() {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
-            console.log('البوت متصل وجاهز للعمل!');
+            console.log('البوت متصل وجاهز للعمل مع Claude مباشرة!');
             scheduleReport();
         }
     });
@@ -246,7 +252,7 @@ async function startBot() {
             if (text === '/بدا') {
                 botActive = true;
                 targetGroupId = groupId;
-                await sendMsg(groupId, '🤖 تم تفعيل البوت بنجاح!');
+                await sendMsg(groupId, '🤖 تم تفعيل البوت بنجاح (عبر Claude مباشرة)!');
                 continue;
             }
             if (text === '/توقف') {
@@ -301,7 +307,7 @@ async function startBot() {
 
             try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
-                const parsedData = await readReceiptWithOpenRouter(buffer, imgMsg.mimetype);
+                const parsedData = await readReceiptWithClaude(buffer, imgMsg.mimetype);
 
                 const txId = parsedData.transaction_id;
                 const fromAcc = parsedData.from_account;
@@ -351,7 +357,7 @@ startBot();
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.write('سيرفر بوت الواتساب يعمل بنجاح!');
+    res.write('سيرفر بوت الواتساب يعمل بنجاح مع Claude!');
     res.end();
 }).listen(PORT, () => {
     console.log(`Web Server is running on port ${PORT}`);
