@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المعتمدة والمطابقة لـ Anthropic API
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المعتمدة رسمياً عبر Anthropic SDK
  */
 
 const { 
@@ -9,6 +9,7 @@ const {
     fetchLatestBaileysVersion,
     downloadMediaMessage 
 } = require('@whiskeysockets/baileys');
+const Anthropic = require('@anthropic-ai/sdk');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const fs = require('fs');
@@ -30,7 +31,8 @@ const ACCOUNTS = [
     { name: 'محمد فتح الرحمن',  number: '0563034575990001' },
 ];
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
+const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
 // -------------------- إدارة البيانات اليومية بدقة --------------------
 
@@ -134,7 +136,7 @@ function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
     return null;
 }
 
-// -------------------- قراءة الإيصال عبر Claude API --------------------
+// -------------------- قراءة الإيصال عبر SDK الرسمية لـ Anthropic --------------------
 
 async function readReceiptWithClaude(buffer, mimetype) {
     if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY مفقود في المتغيرات!');
@@ -152,45 +154,31 @@ async function readReceiptWithClaude(buffer, mimetype) {
   "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف (مثل 150000.00 وليس 150,000.00)
 }`;
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: {
-            "x-api-key": ANTHROPIC_API_KEY.trim(),
-            "anthropic-version": "2023-06-01",
-            "content-type": "application/json"
-        },
-        body: JSON.stringify({
-            model: "claude-3-5-sonnet-20241022",
-            max_tokens: 1000,
-            messages: [
-                {
-                    role: "user",
-                    content: [
-                        {
-                            type: "image",
-                            source: {
-                                type: "base64",
-                                media_type: mimeTypeStr,
-                                data: base64Image
-                            }
+    const response = await anthropic.messages.create({
+        model: 'claude-3-haiku-20240307',
+        max_tokens: 1000,
+        messages: [
+            {
+                role: 'user',
+                content: [
+                    {
+                        type: 'image',
+                        source: {
+                            type: 'base64',
+                            media_type: mimeTypeStr,
+                            data: base64Image,
                         },
-                        {
-                            type: "text",
-                            text: prompt
-                        }
-                    ]
-                }
-            ]
-        })
+                    },
+                    {
+                        type: 'text',
+                        text: prompt,
+                    },
+                ],
+            },
+        ],
     });
 
-    if (!response.ok) {
-        const errText = await response.text();
-        throw new Error(`Anthropic HTTP Error ${response.status}: ${errText}`);
-    }
-
-    const data = await response.json();
-    let content = data.content[0].text.trim();
+    let content = response.content[0].text.trim();
     
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
@@ -253,7 +241,7 @@ async function startBot() {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
-            console.log('البوت متصل وجاهز للعمل عبر Claude API!');
+            console.log('البوت متصل وجاهز للعمل عبر Anthropic SDK!');
             scheduleReport();
         }
     });
