@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المعتمدة رسمياً عبر Anthropic SDK
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة الرسمية المحدثة عبر Anthropic SDK
  */
 
 const { 
@@ -136,7 +136,7 @@ function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
     return null;
 }
 
-// -------------------- قراءة الإيصال عبر SDK الرسمية لـ Anthropic --------------------
+// -------------------- قراءة الإيصال عبر Anthropic SDK --------------------
 
 async function readReceiptWithClaude(buffer, mimetype) {
     if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY مفقود في المتغيرات!');
@@ -155,7 +155,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
 }`;
 
     const response = await anthropic.messages.create({
-        model: 'claude-3-haiku-20240307',
+        model: 'claude-3-5-haiku-latest',
         max_tokens: 1000,
         messages: [
             {
