@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المعتمدة والمطابقة لـ Anthropic API
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المصححة بالكامل
  */
 
 const { 
@@ -142,7 +142,12 @@ async function readReceiptWithClaude(buffer, mimetype) {
     if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY مفقود في المتغيرات!');
 
     const base64Image = buffer.toString('base64');
-    const mimeTypeStr = mimetype || 'image/jpeg';
+    
+    // التأكد من ضبط صيغة الصورة بشكل صحيح
+    let mimeTypeStr = mimetype || 'image/jpeg';
+    if (!['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(mimeTypeStr)) {
+        mimeTypeStr = 'image/jpeg';
+    }
 
     const prompt = `أنت نظام ذكاء اصطناعي دقيق جداً لقراءة إيصالات بنكك السودانية.
 قم باستخراج البيانات التالية بدقة شديدة وأرجعها حصرياً بصيغة JSON بدون أي كلام إضافي أو ماركداون:
@@ -154,9 +159,9 @@ async function readReceiptWithClaude(buffer, mimetype) {
   "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف (مثل 150000.00)
 }`;
 
-    // الموديل الأساسي المضمون لجميع الحسابات
+    // الالياس المباشر المعترف به حالياً لمنع أخطاء 404
     const response = await anthropic.messages.create({
-        model: 'claude-3-sonnet-20240229',
+        model: 'claude-3-5-sonnet-latest',
         max_tokens: 1000,
         messages: [
             {
