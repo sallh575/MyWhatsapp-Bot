@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المباشرة لنموذج Claude (Anthropic API)
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة الدقيقة جداً للإجماليات
  */
 
 const { 
@@ -32,7 +32,7 @@ const ACCOUNTS = [
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
 
-// -------------------- إدارة البيانات اليومية --------------------
+// -------------------- إدارة البيانات اليومية بدقة --------------------
 
 function today() {
     return new Date().toLocaleDateString('en-GB');
@@ -49,6 +49,12 @@ function loadData() {
     try {
         const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (!d.processedTxIds) d.processedTxIds = [];
+        // التأكد من أن جميع الإجماليات أرقام وليست نصوص
+        if (d.totals) {
+            Object.keys(d.totals).forEach(k => {
+                d.totals[k] = Number(d.totals[k]) || 0;
+            });
+        }
         return d;
     } catch {
         return initData();
@@ -71,19 +77,28 @@ function resetIfNewDay(data) {
 function buildReport(data) {
     let report = '📊 *تقرير يوم ' + (data.date || today()) + '*\n------------------\n';
     let grandTotal = 0;
+    
     ACCOUNTS.forEach(acc => {
-        const amount = data.totals[acc.number] || 0;
+        // ضمان التعامل مع القيمة كـ رقم حقيقي دقيق
+        const amount = Number(data.totals[acc.number]) || 0;
         grandTotal += amount;
-        report += '👤 *' + acc.name + '*\n💰 ' + amount.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n\n';
+        report += '👤 *' + acc.name + '*\n💰 ' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '\n\n';
     });
-    report += '------------------\n🔥 *المجموع الكلي: ' + grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '*';
+    
+    report += '------------------\n🔥 *المجموع الكلي: ' + grandTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '*';
     return report;
 }
 
 function creditAccount(acc, amount, txId) {
     let data = loadData();
     data = resetIfNewDay(data);
-    data.totals[acc.number] = (data.totals[acc.number] || 0) + amount;
+    
+    // التأكد التام من تحويل المبلغ المضاف إلى رقم حقيقي وتفادي أي خطأ في الجمع
+    const currentVal = Number(data.totals[acc.number]) || 0;
+    const addVal = Number(amount) || 0;
+    
+    data.totals[acc.number] = Number((currentVal + addVal).toFixed(2));
+    
     if (txId) data.processedTxIds.push(txId);
     saveData(data);
     return data;
@@ -131,13 +146,13 @@ async function readReceiptWithClaude(buffer, mimetype) {
     const mimeTypeStr = mimetype || 'image/jpeg';
 
     const prompt = `أنت نظام ذكاء اصطناعي دقيق جداً لقراءة إيصالات بنكك السودانية.
-قم باستخراج البيانات التالية من الصورة وأرجعها حصرياً بصيغة JSON بدون أي كلام إضافي أو ماركداون:
+قم باستخراج البيانات التالية بدقة شديدة وأرجعها حصرياً بصيغة JSON بدون أي كلام إضافي أو ماركداون:
 {
   "transaction_id": "رقم العملية (مثل 20171567293)",
   "from_account": "رقم الحساب المحول منه كاملاً تحت (من حساب)",
   "to_account": "رقم الحساب المحول إليه كاملاً تحت (الى حساب)",
   "sender_name": "اسم المرسل اليه أو اسم صاحب الحساب الظاهر في الإيصال",
-  "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة (مثل 2000000.00)
+  "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف (مثل 150000.00 وليس 150,000.00)
 }`;
 
     const response = await fetch("https://api.anthropic.com/v1/messages", {
@@ -148,7 +163,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
             "content-type": "application/json"
         },
         body: JSON.stringify({
-            model: "claude-sonnet-4-5",
+            model: "claude-3-5-sonnet-20241022",
             max_tokens: 1000,
             messages: [
                 {
@@ -185,7 +200,13 @@ async function readReceiptWithClaude(buffer, mimetype) {
         throw new Error('لم يعيد النموذج صيغة JSON صحيحة. الرد كان: ' + content);
     }
 
-    return JSON.parse(jsonMatch[0]);
+    const parsed = JSON.parse(jsonMatch[0]);
+    // تنظيف المبلغ والتأكد من أنه رقم صافي
+    if (parsed.amount) {
+        parsed.amount = parseFloat(String(parsed.amount).replace(/,/g, '')) || 0;
+    }
+
+    return parsed;
 }
 
 // -------------------- حالة البوت --------------------
@@ -236,7 +257,7 @@ async function startBot() {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
-            console.log('البوت متصل وجاهز للعمل مع Claude مباشرة!');
+            console.log('البوت متصل وجاهز للعمل بدقة تامة!');
             scheduleReport();
         }
     });
@@ -252,7 +273,7 @@ async function startBot() {
             if (text === '/بدا') {
                 botActive = true;
                 targetGroupId = groupId;
-                await sendMsg(groupId, '🤖 تم تفعيل البوت بنجاح (عبر Claude مباشرة)!');
+                await sendMsg(groupId, '🤖 تم تفعيل البوت بنجاح ودقة تامة!');
                 continue;
             }
             if (text === '/توقف') {
@@ -290,7 +311,7 @@ async function startBot() {
                         const acc = candidates[0];
                         const updated = creditAccount(acc, amountArg, null);
                         await sendMsg(groupId,
-                            '✅ *تمت الإضافة اليدوية بنجاح*\n' +
+                            '✅ *تمت الإضافة اليدوية بدقة*\n' +
                             '👤 الحساب: ' + acc.name + '\n' +
                             '💰 المبلغ: ' + amountArg.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
                             '📊 إجمالي اليوم: ' + updated.totals[acc.number].toLocaleString('en-US', { minimumFractionDigits: 2 })
@@ -313,7 +334,7 @@ async function startBot() {
                 const fromAcc = parsedData.from_account;
                 const toAcc = parsedData.to_account;
                 const senderName = parsedData.sender_name;
-                const amountVal = parseFloat(parsedData.amount);
+                const amountVal = Number(parsedData.amount) || 0;
 
                 let data = loadData();
                 data = resetIfNewDay(data);
@@ -328,7 +349,7 @@ async function startBot() {
                 if (matchedAcc && !isNaN(amountVal) && amountVal > 0) {
                     const updated = creditAccount(matchedAcc, amountVal, txId);
                     await sendMsg(groupId,
-                        '✅ *تم تسجيل التحويل بنجاح تلقائياً!*\n\n' +
+                        '✅ *تم تسجيل التحويل بنجاح ودقة!*\n\n' +
                         '👤 الحساب: ' + matchedAcc.name + '\n' +
                         '💰 المبلغ: ' + amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
                         '🔢 رقم العملية: ' + (txId || 'N/A') + '\n' +
@@ -357,8 +378,8 @@ startBot();
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.write('سيرفر بوت الواتساب يعمل بنجاح مع Claude!');
+    res.write('سيرفر بوت الواتساب يعمل بنجاح وبدقة عالية!');
     res.end();
-}).listen(PORT, () => {
+}).listen(PORT, '0.0.0.0', () => {
     console.log(`Web Server is running on port ${PORT}`);
 });
