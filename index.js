@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة الدقيقة المعتمدة على Claude API
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المعتمدة والمطابقة لـ Anthropic API
  */
 
 const { 
@@ -155,12 +155,12 @@ async function readReceiptWithClaude(buffer, mimetype) {
     const response = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: {
-            "x-api-key": ANTHROPIC_API_KEY,
+            "x-api-key": ANTHROPIC_API_KEY.trim(),
             "anthropic-version": "2023-06-01",
             "content-type": "application/json"
         },
         body: JSON.stringify({
-            model: "claude-3-5-sonnet-latest",
+            model: "claude-3-5-sonnet-20241022",
             max_tokens: 1000,
             messages: [
                 {
