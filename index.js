@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة الدقيقة جداً للإجماليات
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة الدقيقة جداً والمحدثة
  */
 
 const { 
@@ -49,7 +49,6 @@ function loadData() {
     try {
         const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (!d.processedTxIds) d.processedTxIds = [];
-        // التأكد من أن جميع الإجماليات أرقام وليست نصوص
         if (d.totals) {
             Object.keys(d.totals).forEach(k => {
                 d.totals[k] = Number(d.totals[k]) || 0;
@@ -79,7 +78,6 @@ function buildReport(data) {
     let grandTotal = 0;
     
     ACCOUNTS.forEach(acc => {
-        // ضمان التعامل مع القيمة كـ رقم حقيقي دقيق
         const amount = Number(data.totals[acc.number]) || 0;
         grandTotal += amount;
         report += '👤 *' + acc.name + '*\n💰 ' + amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '\n\n';
@@ -93,7 +91,6 @@ function creditAccount(acc, amount, txId) {
     let data = loadData();
     data = resetIfNewDay(data);
     
-    // التأكد التام من تحويل المبلغ المضاف إلى رقم حقيقي وتفادي أي خطأ في الجمع
     const currentVal = Number(data.totals[acc.number]) || 0;
     const addVal = Number(amount) || 0;
     
@@ -163,7 +160,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
             "content-type": "application/json"
         },
         body: JSON.stringify({
-            model: "claude-3-5-sonnet-20241022",
+            model: "claude-3-5-sonnet-20240620",
             max_tokens: 1000,
             messages: [
                 {
@@ -201,7 +198,6 @@ async function readReceiptWithClaude(buffer, mimetype) {
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
-    // تنظيف المبلغ والتأكد من أنه رقم صافي
     if (parsed.amount) {
         parsed.amount = parseFloat(String(parsed.amount).replace(/,/g, '')) || 0;
     }
