@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المستقرة ومضمونة الاتصال
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة الدقيقة المعتمدة على Claude API
  */
 
 const { 
@@ -101,7 +101,7 @@ function creditAccount(acc, amount, txId) {
     return data;
 }
 
-// -------------------- المطابقة الذكية والدقيقة 100% --------------------
+// -------------------- المطابقة الذكية --------------------
 
 function normalizeDigits(str) {
     if (!str) return '';
@@ -134,7 +134,7 @@ function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
     return null;
 }
 
-// -------------------- قراءة الإيصال عبر Claude (Anthropic API) مباشرة --------------------
+// -------------------- قراءة الإيصال عبر Claude API --------------------
 
 async function readReceiptWithClaude(buffer, mimetype) {
     if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY مفقود في المتغيرات!');
@@ -160,7 +160,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
             "content-type": "application/json"
         },
         body: JSON.stringify({
-            model: "claude-3-haiku-20240307",
+            model: "claude-3-5-sonnet-latest",
             max_tokens: 1000,
             messages: [
                 {
@@ -253,7 +253,7 @@ async function startBot() {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
-            console.log('البوت متصل وجاهز للعمل بدقة تامة!');
+            console.log('البوت متصل وجاهز للعمل عبر Claude API!');
             scheduleReport();
         }
     });
