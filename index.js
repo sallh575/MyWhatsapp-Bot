@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة الرسمية المحدثة عبر Anthropic SDK
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المعتمدة والمطابقة لـ Anthropic API
  */
 
 const { 
@@ -147,15 +147,16 @@ async function readReceiptWithClaude(buffer, mimetype) {
     const prompt = `أنت نظام ذكاء اصطناعي دقيق جداً لقراءة إيصالات بنكك السودانية.
 قم باستخراج البيانات التالية بدقة شديدة وأرجعها حصرياً بصيغة JSON بدون أي كلام إضافي أو ماركداون:
 {
-  "transaction_id": "رقم العملية (مثل 20171567293)",
-  "from_account": "رقم الحساب المحول منه كاملاً تحت (من حساب)",
-  "to_account": "رقم الحساب المحول إليه كاملاً تحت (الى حساب)",
-  "sender_name": "اسم المرسل اليه أو اسم صاحب الحساب الظاهر في الإيصال",
-  "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف (مثل 150000.00 وليس 150,000.00)
+  "transaction_id": "رقم العملية",
+  "from_account": "رقم الحساب المحول منه كاملاً",
+  "to_account": "رقم الحساب المحول إليه كاملاً",
+  "sender_name": "اسم صاحب الحساب أو المستلم الظاهر في الإيصال",
+  "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف (مثل 150000.00)
 }`;
 
+    // الموديل الأساسي المضمون لجميع الحسابات
     const response = await anthropic.messages.create({
-        model: 'claude-3-5-haiku-latest',
+        model: 'claude-3-sonnet-20240229',
         max_tokens: 1000,
         messages: [
             {
@@ -182,7 +183,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
     
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) {
-        throw new Error('لم يعيد النموذج صيغة JSON صحيحة. الرد كان: ' + content);
+        throw new Error('تعذر تحليل JSON من الرد.');
     }
 
     const parsed = JSON.parse(jsonMatch[0]);
@@ -241,7 +242,7 @@ async function startBot() {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
-            console.log('البوت متصل وجاهز للعمل عبر Anthropic SDK!');
+            console.log('البوت متصل وجاهز للعمل عبر Claude!');
             scheduleReport();
         }
     });
@@ -362,7 +363,7 @@ startBot();
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.write('سيرفر بوت الواتساب يعمل بنجاح وبدقة عالية!');
+    res.write('سيرفر بوت الواتساب يعمل بنجاح!');
     res.end();
 }).listen(PORT, '0.0.0.0', () => {
     console.log(`Web Server is running on port ${PORT}`);
