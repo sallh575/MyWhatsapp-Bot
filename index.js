@@ -1,7 +1,3 @@
-/**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً
- */
-
 const { 
     default: makeWASocket, 
     useMultiFileAuthState, 
@@ -34,7 +30,7 @@ const ACCOUNTS = [
 const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-// -------------------- إدارة البيانات اليومية --------------------
+// -------------------- إدارة البيانات --------------------
 
 function today() {
     return new Date().toLocaleDateString('en-GB');
@@ -136,7 +132,7 @@ function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
     return null;
 }
 
-// -------------------- قراءة الإيصال عبر Anthropic SDK --------------------
+// -------------------- قراءة الإيصال عبر Anthropic --------------------
 
 async function readReceiptWithClaude(buffer, mimetype) {
     if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY مفقود في المتغيرات!');
@@ -155,7 +151,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
   "from_account": "رقم الحساب المحول منه كاملاً",
   "to_account": "رقم الحساب المحول إليه كاملاً",
   "sender_name": "اسم صاحب الحساب أو المستلم الظاهر في الإيصال",
-  "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف (مثل 150000.00)
+  "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف
 }`;
 
     const response = await anthropic.messages.create({
@@ -183,11 +179,8 @@ async function readReceiptWithClaude(buffer, mimetype) {
     });
 
     let content = response.content[0].text.trim();
-    
     const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-        throw new Error('تعذر تحليل JSON من الرد.');
-    }
+    if (!jsonMatch) throw new Error('تعذر تحليل JSON من الرد.');
 
     const parsed = JSON.parse(jsonMatch[0]);
     if (parsed.amount) {
@@ -197,7 +190,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
     return parsed;
 }
 
-// -------------------- حالة البوت --------------------
+// -------------------- تشغيل البوت --------------------
 
 let botActive = false;
 let targetGroupId = null;
@@ -218,8 +211,6 @@ function scheduleReport() {
     }, { timezone: 'Africa/Khartoum' });
     isCronScheduled = true;
 }
-
-// -------------------- تشغيل السيرفر والاتصال --------------------
 
 async function startBot() {
     const { version } = await fetchLatestBaileysVersion();
