@@ -160,13 +160,15 @@ async function readReceiptWithClaude(buffer, mimetype) {
   "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف
 }`;
 
-    // الموديلات المتاحة لحسابات Tier 1 (استبعاد Opus)
+    // أسماء الموديلات الحديثة والديناميكية المعتمدة حالياً
     const candidateModels = workingModel 
         ? [workingModel] 
         : [
-            'claude-3-5-sonnet-20240620',
-            'claude-3-haiku-20240307',
-            'claude-3-sonnet-20240229'
+            'claude-3-5-sonnet-latest',
+            'claude-3-5-haiku-latest',
+            'claude-3-5-sonnet-20241022',
+            'claude-3-5-haiku-20241022',
+            'claude-3-haiku-20240307'
           ];
 
     let lastError = null;
@@ -207,13 +209,13 @@ async function readReceiptWithClaude(buffer, mimetype) {
             }
 
             workingModel = modelName;
-            console.log(`تم اعتماد الموديل المتاح بنجاح: ${workingModel}`);
+            console.log(`تم اعتماد الموديل الشغال بنجاح: ${workingModel}`);
             return parsed;
 
         } catch (err) {
             lastError = err;
             if (err.status === 404 || (err.message && err.message.includes('not_found_error'))) {
-                console.log(`الموديل ${modelName} غير متاح في حسابك، التجربة على الموديل التالي...`);
+                console.log(`الموديل ${modelName} غير متاح، تجربة الموديل التالي...`);
                 continue;
             }
             throw err;
