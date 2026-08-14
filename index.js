@@ -9,7 +9,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const fs = require('fs');
-const path = path = require('path');
+const path = require('path');
 const pino = require('pino');
 const http = require('http');
 
