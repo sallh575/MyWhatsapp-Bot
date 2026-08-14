@@ -37,7 +37,7 @@ function today() {
 }
 
 function initData() {
-    const data = { date: today(), totals: {}, processedTxIds: [] };
+    const data = { date: today(), totals: {}, processedTxIds: [], botActive: true, targetGroupId: null };
     ACCOUNTS.forEach(a => { data.totals[a.number] = 0; });
     return data;
 }
@@ -47,11 +47,12 @@ function loadData() {
     try {
         const d = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
         if (!d.processedTxIds) d.processedTxIds = [];
-        if (d.totals) {
-            Object.keys(d.totals).forEach(k => {
-                d.totals[k] = Number(d.totals[k]) || 0;
-            });
-        }
+        if (!d.totals) d.totals = {};
+        if (d.botActive === undefined) d.botActive = true;
+        ACCOUNTS.forEach(a => {
+            if (d.totals[a.number] === undefined) d.totals[a.number] = 0;
+            else d.totals[a.number] = Number(d.totals[a.number]) || 0;
+        });
         return d;
     } catch {
         return initData();
@@ -65,6 +66,8 @@ function saveData(data) {
 function resetIfNewDay(data) {
     if (data.date !== today()) {
         const fresh = initData();
+        fresh.botActive = data.botActive !== undefined ? data.botActive : true;
+        fresh.targetGroupId = data.targetGroupId || null;
         saveData(fresh);
         return fresh;
     }
@@ -155,7 +158,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
 }`;
 
     const response = await anthropic.messages.create({
-        model: 'claude-3-5-haiku-20241022',
+        model: 'claude-3-5-sonnet-20241022',
         max_tokens: 1000,
         messages: [
             {
@@ -192,22 +195,25 @@ async function readReceiptWithClaude(buffer, mimetype) {
 
 // -------------------- تشغيل البوت --------------------
 
-let botActive = false;
-let targetGroupId = null;
 let sock = null;
 let isCronScheduled = false;
 
 async function sendMsg(jid, text) {
-    await sock.sendMessage(jid, { text });
+    if (sock) await sock.sendMessage(jid, { text });
 }
 
 function scheduleReport() {
     if (isCronScheduled) return;
     cron.schedule('0 0 * * *', async () => {
-        if (!targetGroupId) return;
         let data = loadData();
-        await sendMsg(targetGroupId, buildReport(data));
-        saveData(initData());
+        if (!data.targetGroupId) return;
+        await sendMsg(data.targetGroupId, buildReport(data));
+        const active = data.botActive;
+        const target = data.targetGroupId;
+        const fresh = initData();
+        fresh.botActive = active;
+        fresh.targetGroupId = target;
+        saveData(fresh);
     }, { timezone: 'Africa/Khartoum' });
     isCronScheduled = true;
 }
@@ -247,23 +253,33 @@ async function startBot() {
             if (!msg.key.remoteJid.endsWith('@g.us')) continue;
 
             const groupId = msg.key.remoteJid;
-            const text = (msg.message.conversation || msg.message.extendedTextMessage?.text || '').trim();
+            
+            // فك تغليف الرسائل المؤقتة/العادية
+            const m = msg.message?.ephemeralMessage?.message || 
+                      msg.message?.viewOnceMessage?.message || 
+                      msg.message?.viewOnceMessageV2?.message || 
+                      msg.message;
+
+            const text = (m.conversation || m.extendedTextMessage?.text || m.imageMessage?.caption || '').trim();
+
+            let stateData = loadData();
 
             if (text === '/بدا') {
-                botActive = true;
-                targetGroupId = groupId;
-                await sendMsg(groupId, '🤖 تم تفعيل البوت بنجاح!');
+                stateData.botActive = true;
+                stateData.targetGroupId = groupId;
+                saveData(stateData);
+                await sendMsg(groupId, '🤖 تم تفعيل البوت بنجاح وحفظ الحالة!');
                 continue;
             }
             if (text === '/توقف') {
-                botActive = false;
+                stateData.botActive = false;
+                saveData(stateData);
                 await sendMsg(groupId, '🛑 تم إيقاف البوت.');
                 continue;
             }
             if (text === '/تقرير') {
-                let data = loadData();
-                data = resetIfNewDay(data);
-                await sendMsg(groupId, buildReport(data));
+                stateData = resetIfNewDay(stateData);
+                await sendMsg(groupId, buildReport(stateData));
                 continue;
             }
             if (text === '/الحسابات') {
@@ -272,7 +288,8 @@ async function startBot() {
                 continue;
             }
 
-            if (!botActive || groupId !== targetGroupId) continue;
+            if (!stateData.botActive) continue;
+            if (stateData.targetGroupId && stateData.targetGroupId !== groupId) continue;
 
             if (text.startsWith('/اضف')) {
                 const parts = text.split(/\s+/).filter(Boolean);
@@ -302,8 +319,11 @@ async function startBot() {
                 continue;
             }
 
-            const imgMsg = msg.message.imageMessage;
+            const imgMsg = m.imageMessage;
             if (!imgMsg) continue;
+
+            // إشعار فوري باستلام الصورة للرد الفوري
+            await sendMsg(groupId, '⏳ جاري قراءة الإيصال وتحليل البيانات...');
 
             try {
                 const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger: pino({ level: 'silent' }) });
