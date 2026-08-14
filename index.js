@@ -39,7 +39,9 @@ const ACCOUNTS = [
     { name: 'محمد فتح الرحمن',  number: '0563034575990001' },
 ];
 
-const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
+// إصلاح: .trim() يشيل أي مسافة أو سطر جديد زايد ممكن ينضاف بالغلط لما تنسخ المفتاح
+// وتلصقه في متغيرات البيئة - ده أشهر سبب لخطأ "API key is invalid" رغم إن المفتاح صحيح فعلاً
+const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
 
 // إصلاح عاجل: claude-3-5-sonnet-20241022 موديل متقاعد (retired) من Anthropic بتاريخ
 // 28 أكتوبر 2025 - أي طلب API بيه يفشل بالكامل الآن. رفعته لـ Sonnet 5 الحالي.
