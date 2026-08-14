@@ -30,9 +30,6 @@ const ACCOUNTS = [
 const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-// متغير لحفظ الموديل الشغال تلقائياً
-let workingModel = null;
-
 // -------------------- إدارة البيانات --------------------
 
 function today() {
@@ -141,7 +138,9 @@ function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
 // -------------------- قراءة الإيصال عبر Anthropic --------------------
 
 async function readReceiptWithClaude(buffer, mimetype) {
-    if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY مفقود في المتغيرات!');
+    if (!ANTHROPIC_API_KEY) {
+        throw new Error('مفتاح ANTHROPIC_API_KEY غير موجود في متغيرات البيئة!');
+    }
 
     const base64Image = buffer.toString('base64');
     
@@ -160,69 +159,40 @@ async function readReceiptWithClaude(buffer, mimetype) {
   "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف
 }`;
 
-    // أسماء الموديلات الحديثة والديناميكية المعتمدة حالياً
-    const candidateModels = workingModel 
-        ? [workingModel] 
-        : [
-            'claude-3-5-sonnet-latest',
-            'claude-3-5-haiku-latest',
-            'claude-3-5-sonnet-20241022',
-            'claude-3-5-haiku-20241022',
-            'claude-3-haiku-20240307'
-          ];
-
-    let lastError = null;
-
-    for (const modelName of candidateModels) {
-        try {
-            const response = await anthropic.messages.create({
-                model: modelName,
-                max_tokens: 1000,
-                messages: [
+    const response = await anthropic.messages.create({
+        model: 'claude-3-5-haiku-latest',
+        max_tokens: 1000,
+        messages: [
+            {
+                role: 'user',
+                content: [
                     {
-                        role: 'user',
-                        content: [
-                            {
-                                type: 'image',
-                                source: {
-                                    type: 'base64',
-                                    media_type: mimeTypeStr,
-                                    data: base64Image,
-                                },
-                            },
-                            {
-                                type: 'text',
-                                text: prompt,
-                            },
-                        ],
+                        type: 'image',
+                        source: {
+                            type: 'base64',
+                            media_type: mimeTypeStr,
+                            data: base64Image,
+                        },
+                    },
+                    {
+                        type: 'text',
+                        text: prompt,
                     },
                 ],
-            });
+            },
+        ],
+    });
 
-            let content = response.content[0].text.trim();
-            const jsonMatch = content.match(/\{[\s\S]*\}/);
-            if (!jsonMatch) throw new Error('تعذر تحليل JSON من الرد.');
+    let content = response.content[0].text.trim();
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) throw new Error('تعذر تحليل JSON من الرد.');
 
-            const parsed = JSON.parse(jsonMatch[0]);
-            if (parsed.amount) {
-                parsed.amount = parseFloat(String(parsed.amount).replace(/,/g, '')) || 0;
-            }
-
-            workingModel = modelName;
-            console.log(`تم اعتماد الموديل الشغال بنجاح: ${workingModel}`);
-            return parsed;
-
-        } catch (err) {
-            lastError = err;
-            if (err.status === 404 || (err.message && err.message.includes('not_found_error'))) {
-                console.log(`الموديل ${modelName} غير متاح، تجربة الموديل التالي...`);
-                continue;
-            }
-            throw err;
-        }
+    const parsed = JSON.parse(jsonMatch[0]);
+    if (parsed.amount) {
+        parsed.amount = parseFloat(String(parsed.amount).replace(/,/g, '')) || 0;
     }
 
-    throw lastError || new Error('تعذر العثور على موديل متاح في حسابك.');
+    return parsed;
 }
 
 // -------------------- تشغيل البوت --------------------
