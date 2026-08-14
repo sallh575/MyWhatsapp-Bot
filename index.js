@@ -160,7 +160,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
 }`;
 
     const response = await anthropic.messages.create({
-        model: 'claude-3-5-haiku',
+        model: 'claude-3-haiku-20240307',
         max_tokens: 1000,
         messages: [
             {
@@ -364,7 +364,7 @@ async function startBot() {
                     );
                 }
 
-            } حدث (err) {
+            } catch (err) {
                 console.error('خطأ قراءة الإيصال:', err);
                 await sendMsg(groupId, '❌ خطأ تقني: ' + err.message);
             }
