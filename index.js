@@ -9,7 +9,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const qrcode = require('qrcode-terminal');
 const cron = require('node-cron');
 const fs = require('fs');
-const path = require('path');
+const path = path = require('path');
 const pino = require('pino');
 const http = require('http');
 
@@ -30,7 +30,7 @@ const ACCOUNTS = [
 const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-// حفظ الموديل الناجح في الذاكرة بعد أول تجربة
+// متغير لحفظ الموديل الشغال تلقائياً
 let workingModel = null;
 
 // -------------------- إدارة البيانات --------------------
@@ -138,7 +138,7 @@ function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
     return null;
 }
 
-// -------------------- قراءة الإيصال عبر Anthropic (اختبار الموديلات المتاحة) --------------------
+// -------------------- قراءة الإيصال عبر Anthropic --------------------
 
 async function readReceiptWithClaude(buffer, mimetype) {
     if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY مفقود في المتغيرات!');
@@ -160,15 +160,13 @@ async function readReceiptWithClaude(buffer, mimetype) {
   "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف
 }`;
 
-    // قائمة التسميات المتاحة بحسب قائمة الحساب
+    // الموديلات المتاحة لحسابات Tier 1 (استبعاد Opus)
     const candidateModels = workingModel 
         ? [workingModel] 
         : [
-            'claude-3-5-sonnet-latest',
-            'claude-3-sonnet-20240229',
             'claude-3-5-sonnet-20240620',
             'claude-3-haiku-20240307',
-            'claude-3-opus-20240229'
+            'claude-3-sonnet-20240229'
           ];
 
     let lastError = null;
@@ -215,7 +213,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
         } catch (err) {
             lastError = err;
             if (err.status === 404 || (err.message && err.message.includes('not_found_error'))) {
-                console.log(`جاري تجربة الاسم التالي بدلاً من ${modelName}...`);
+                console.log(`الموديل ${modelName} غير متاح في حسابك، التجربة على الموديل التالي...`);
                 continue;
             }
             throw err;
