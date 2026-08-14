@@ -154,13 +154,15 @@ function findMatchingAccount(toNum, recipientNameText = '') {
 
 // -------------------- قراءة الإيصال عبر Claude (Anthropic API) مباشرة --------------------
 
+// أكواد HTTP يستاهل معاها نعيد المحاولة (مؤقتة: ازدحام/تحميل زائد/تقطيع شبكة)
+const RETRYABLE_HTTP_STATUS = [429, 500, 502, 503, 529];
+
 async function callClaudeAPI(payload, attempts = 2) {
-    // إصلاح: محاولة إعادة بسيطة لو فشل الطلب لسبب مؤقت (شبكة أو ازدحام على الـAPI)
-    // بدل ما تفشل العملية كاملة من أول مرة ويضطر حد يرسل الصورة تاني يدوياً.
     let lastErr;
     for (let i = 0; i < attempts; i++) {
+        let response;
         try {
-            const response = await fetch("https://api.anthropic.com/v1/messages", {
+            response = await fetch("https://api.anthropic.com/v1/messages", {
                 method: "POST",
                 headers: {
                     "x-api-key": ANTHROPIC_API_KEY,
@@ -169,19 +171,26 @@ async function callClaudeAPI(payload, attempts = 2) {
                 },
                 body: JSON.stringify(payload)
             });
-
-            if (!response.ok) {
-                const errText = await response.text();
-                throw new Error(`Anthropic HTTP Error ${response.status}: ${errText}`);
-            }
-
-            return await response.json();
-        } catch (err) {
-            lastErr = err;
-            if (i < attempts - 1) {
-                await new Promise(r => setTimeout(r, 1500));
-            }
+        } catch (networkErr) {
+            // خطأ شبكة حقيقي (مش رد من Anthropic) - يستاهل إعادة محاولة
+            lastErr = networkErr;
+            if (i < attempts - 1) await new Promise(r => setTimeout(r, 1500));
+            continue;
         }
+
+        if (response.ok) return await response.json();
+
+        const errText = await response.text();
+        const httpErr = new Error(`Anthropic HTTP Error ${response.status}: ${errText}`);
+
+        // إصلاح: نعيد المحاولة بس لو الخطأ مؤقت. لو الخطأ 400 (زي باراميتر مرفوض أو
+        // طلب غلط بالشكل) مفيش أي فايدة من الإعادة - نفس الطلب هيفشل بنفس الطريقة
+        // بالظبط في كل مرة، وكنا بنضيّع وقت 1.5 ثانية إضافية على الفاضي كل مرة يحصل خطأ كده.
+        if (!RETRYABLE_HTTP_STATUS.includes(response.status) || i === attempts - 1) {
+            throw httpErr;
+        }
+        lastErr = httpErr;
+        await new Promise(r => setTimeout(r, 1500));
     }
     throw lastErr;
 }
@@ -206,12 +215,16 @@ async function readReceiptWithClaude(buffer, mimetype) {
   "recipient_name": "الاسم الظاهر أمام 'إسم المرسل اليه' إن وُجد، وإلا اسم صاحب الحساب الظاهر بالإيصال",
   "amount": المبلغ كرقم عشري صافٍ فقط بدون فواصل أو رموز عملة أو أي نص (مثال صحيح: 200000.00)
 }
-لو أي حقل مش واضح في الصورة أرجع له null بدلاً من التخمين.`;
+لو أي حقل مش واضح في الصورة أرجع له null بدلاً من التخمين.
+اقرأ بحرفية ودقة تامة بدون أي تخمين أو تقريب - نفس الصورة يجب أن تُقرأ بنفس الطريقة تماماً في كل مرة.`;
 
+    // إصلاح مهم: شلت "temperature: 0" اللي كانت هنا. Sonnet 5 (وكل الجيل الجديد زي
+    // Opus 4.7/4.8) بيرفض الباراميتر ده تماماً ويرجع نفس الخطأ اللي واجهته - حتى لو قيمته صفر.
+    // ده سبب رسالة "temperature is deprecated for this model" اللي جاتك. الثبات في القراءة
+    // دلوقتي معتمد بس على وضوح تعليمات الـprompt (فوق) مش على معامل الـsampling.
     const data = await callClaudeAPI({
         model: CLAUDE_MODEL,
         max_tokens: 1000,
-        temperature: 0, // إصلاح: صفر عشان القراءة تطلع ثابتة ودقيقة كل مرة (استخراج بيانات، مش مهمة إبداعية)
         messages: [
             {
                 role: "user",
