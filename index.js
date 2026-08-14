@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المستقرة المعتمدة
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً
  */
 
 const { 
@@ -103,7 +103,7 @@ function creditAccount(acc, amount, txId) {
     return data;
 }
 
-// -------------------- المطابقة الذكية --------------------
+// -------------------- المطابقة --------------------
 
 function normalizeDigits(str) {
     if (!str) return '';
@@ -159,7 +159,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
 }`;
 
     const response = await anthropic.messages.create({
-        model: 'claude-3-5-sonnet-latest',
+        model: 'claude-3-haiku-20240307',
         max_tokens: 1000,
         messages: [
             {
@@ -245,7 +245,7 @@ async function startBot() {
             const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
         } else if (connection === 'open') {
-            console.log('البوت متصل وجاهز للعمل عبر Claude!');
+            console.log('البوت متصل وجاهز للعمل!');
             scheduleReport();
         }
     });
@@ -261,7 +261,7 @@ async function startBot() {
             if (text === '/بدا') {
                 botActive = true;
                 targetGroupId = groupId;
-                await sendMsg(groupId, '🤖 تم تفعيل البوت بنجاح ودقة تامة!');
+                await sendMsg(groupId, '🤖 تم تفعيل البوت بنجاح!');
                 continue;
             }
             if (text === '/توقف') {
@@ -299,7 +299,7 @@ async function startBot() {
                         const acc = candidates[0];
                         const updated = creditAccount(acc, amountArg, null);
                         await sendMsg(groupId,
-                            '✅ *تمت الإضافة اليدوية بدقة*\n' +
+                            '✅ *تمت الإضافة اليدوية بنجاح*\n' +
                             '👤 الحساب: ' + acc.name + '\n' +
                             '💰 المبلغ: ' + amountArg.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
                             '📊 إجمالي اليوم: ' + updated.totals[acc.number].toLocaleString('en-US', { minimumFractionDigits: 2 })
@@ -337,7 +337,7 @@ async function startBot() {
                 if (matchedAcc && !isNaN(amountVal) && amountVal > 0) {
                     const updated = creditAccount(matchedAcc, amountVal, txId);
                     await sendMsg(groupId,
-                        '✅ *تم تسجيل التحويل بنجاح ودقة!*\n\n' +
+                        '✅ *تم تسجيل التحويل بنجاح تلقائياً!*\n\n' +
                         '👤 الحساب: ' + matchedAcc.name + '\n' +
                         '💰 المبلغ: ' + amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
                         '🔢 رقم العملية: ' + (txId || 'N/A') + '\n' +
@@ -366,7 +366,7 @@ startBot();
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    res.write('سيرفر بوت الواتساب يعمل بنجاح!');
+    res.write('سيرفر البوت يعمل بنجاح!');
     res.end();
 }).listen(PORT, '0.0.0.0', () => {
     console.log(`Web Server is running on port ${PORT}`);
