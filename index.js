@@ -1,5 +1,5 @@
 /**
- * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المعتمدة والمستقرة
+ * بوت واتساب لقراءة إيصالات بنكك تلقائياً - النسخة المستقرة المعتمدة
  */
 
 const { 
@@ -34,7 +34,7 @@ const ACCOUNTS = [
 const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
-// -------------------- إدارة البيانات اليومية بدقة --------------------
+// -------------------- إدارة البيانات اليومية --------------------
 
 function today() {
     return new Date().toLocaleDateString('en-GB');
@@ -159,7 +159,7 @@ async function readReceiptWithClaude(buffer, mimetype) {
 }`;
 
     const response = await anthropic.messages.create({
-        model: 'claude-3-haiku-20240307',
+        model: 'claude-3-5-sonnet-latest',
         max_tokens: 1000,
         messages: [
             {
