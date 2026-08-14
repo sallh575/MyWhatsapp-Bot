@@ -30,6 +30,9 @@ const ACCOUNTS = [
 const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
 const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY });
 
+// حفظ الموديل الناجح في الذاكرة بعد أول تجربة
+let workingModel = null;
+
 // -------------------- إدارة البيانات --------------------
 
 function today() {
@@ -135,7 +138,7 @@ function findMatchingAccountByNumbers(fromNum, toNum, senderNameText = '') {
     return null;
 }
 
-// -------------------- قراءة الإيصال عبر Anthropic --------------------
+// -------------------- قراءة الإيصال عبر Anthropic (اختبار الموديلات المتاحة) --------------------
 
 async function readReceiptWithClaude(buffer, mimetype) {
     if (!ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY مفقود في المتغيرات!');
@@ -157,40 +160,69 @@ async function readReceiptWithClaude(buffer, mimetype) {
   "amount": المبلغ الرقمي الصافي كقيمة عددية دقيقة بدون فواصل للآلاف
 }`;
 
-    const response = await anthropic.messages.create({
-        model: 'claude-3-5-sonnet-20241022',
-        max_tokens: 1000,
-        messages: [
-            {
-                role: 'user',
-                content: [
+    // قائمة التسميات المتاحة بحسب قائمة الحساب
+    const candidateModels = workingModel 
+        ? [workingModel] 
+        : [
+            'claude-3-5-sonnet-latest',
+            'claude-3-sonnet-20240229',
+            'claude-3-5-sonnet-20240620',
+            'claude-3-haiku-20240307',
+            'claude-3-opus-20240229'
+          ];
+
+    let lastError = null;
+
+    for (const modelName of candidateModels) {
+        try {
+            const response = await anthropic.messages.create({
+                model: modelName,
+                max_tokens: 1000,
+                messages: [
                     {
-                        type: 'image',
-                        source: {
-                            type: 'base64',
-                            media_type: mimeTypeStr,
-                            data: base64Image,
-                        },
-                    },
-                    {
-                        type: 'text',
-                        text: prompt,
+                        role: 'user',
+                        content: [
+                            {
+                                type: 'image',
+                                source: {
+                                    type: 'base64',
+                                    media_type: mimeTypeStr,
+                                    data: base64Image,
+                                },
+                            },
+                            {
+                                type: 'text',
+                                text: prompt,
+                            },
+                        ],
                     },
                 ],
-            },
-        ],
-    });
+            });
 
-    let content = response.content[0].text.trim();
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) throw new Error('تعذر تحليل JSON من الرد.');
+            let content = response.content[0].text.trim();
+            const jsonMatch = content.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error('تعذر تحليل JSON من الرد.');
 
-    const parsed = JSON.parse(jsonMatch[0]);
-    if (parsed.amount) {
-        parsed.amount = parseFloat(String(parsed.amount).replace(/,/g, '')) || 0;
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (parsed.amount) {
+                parsed.amount = parseFloat(String(parsed.amount).replace(/,/g, '')) || 0;
+            }
+
+            workingModel = modelName;
+            console.log(`تم اعتماد الموديل المتاح بنجاح: ${workingModel}`);
+            return parsed;
+
+        } catch (err) {
+            lastError = err;
+            if (err.status === 404 || (err.message && err.message.includes('not_found_error'))) {
+                console.log(`جاري تجربة الاسم التالي بدلاً من ${modelName}...`);
+                continue;
+            }
+            throw err;
+        }
     }
 
-    return parsed;
+    throw lastError || new Error('تعذر العثور على موديل متاح في حسابك.');
 }
 
 // -------------------- تشغيل البوت --------------------
@@ -254,7 +286,6 @@ async function startBot() {
 
             const groupId = msg.key.remoteJid;
             
-            // فك تغليف الرسائل المؤقتة/العادية
             const m = msg.message?.ephemeralMessage?.message || 
                       msg.message?.viewOnceMessage?.message || 
                       msg.message?.viewOnceMessageV2?.message || 
@@ -322,7 +353,6 @@ async function startBot() {
             const imgMsg = m.imageMessage;
             if (!imgMsg) continue;
 
-            // إشعار فوري باستلام الصورة للرد الفوري
             await sendMsg(groupId, '⏳ جاري قراءة الإيصال وتحليل البيانات...');
 
             try {
