@@ -137,17 +137,14 @@ function findAccountByNumber(num) {
     return null;
 }
 
-// إصلاح (مشكلة مهمة ثانية): الدالة القديمة كانت تطابق العملية بحساباتنا لو ظهر
-// الحساب في "من حساب" *أو* "الى حساب". فلو أحد أصحاب الحسابات الثمانية حوّل فلوس
-// لطرف خارجي (بالضبط زي الإيصال اللي بعتّه - تحويل من حساب أحمد عبد الباقي لحساب
-// مش مسجل عندنا)، كانت تُحتسب غلط كإيراد داخل لحساب أحمد رغم إنها فلوس طالعة منه!
-// الصح: نطابق فقط على "الحساب المستلم" (to_account) لأنه هو اللي فعلاً استلم الفلوس.
-function findMatchingAccount(toNum, recipientNameText = '') {
-    const byNumber = findAccountByNumber(toNum);
+// المطابقة على حساب المُرسِل (from_account) لأن أصحاب الحسابات الثمانية
+// يحوّلون للزبائن - نريد نتتبع المبالغ الصادرة من حساباتنا.
+function findMatchingAccount(fromNum, senderNameText = '') {
+    const byNumber = findAccountByNumber(fromNum);
     if (byNumber) return byNumber;
 
     for (const acc of ACCOUNTS) {
-        if (recipientNameText && recipientNameText.includes(acc.name)) {
+        if (senderNameText && senderNameText.includes(acc.name)) {
             return acc;
         }
     }
@@ -401,35 +398,25 @@ async function startBot() {
                     continue;
                 }
 
-                const matchedAcc = findMatchingAccount(toAcc, recipientName);
+                const matchedAcc = findMatchingAccount(fromAcc, recipientName);
 
                 if (matchedAcc && !isNaN(amountVal) && amountVal > 0) {
                     const updated = creditAccount(matchedAcc, amountVal, txId);
                     await sendMsg(groupId,
-                        '✅ *تم تسجيل التحويل بنجاح تلقائياً!*\n\n' +
-                        '👤 الحساب: ' + matchedAcc.name + '\n' +
+                        '✅ *تم تسجيل التحويل الصادر بنجاح!*\n\n' +
+                        '👤 المُحوِّل: ' + matchedAcc.name + '\n' +
+                        '➡️ إلى حساب: ' + (toAcc || 'غير واضح') + '\n' +
                         '💰 المبلغ: ' + amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 }) + '\n' +
                         '🔢 رقم العملية: ' + (txId || 'N/A') + '\n' +
                         '📊 إجمالي اليوم: ' + updated.totals[matchedAcc.number].toLocaleString('en-US', { minimumFractionDigits: 2 })
                     );
                 } else {
-                    // إصلاح: لو الحساب المصدر ("من حساب") هو أحد حساباتنا لكن المستلم خارجي،
-                    // فهذا تحويل صادر مش إيراد - نوضحها للمستخدم بدل رسالة "غير مطابق" العامة
-                    const outgoingFrom = findAccountByNumber(fromAcc);
-                    if (outgoingFrom) {
-                        await sendMsg(groupId,
-                            'ℹ️ هذا إيصال *تحويل صادر* من حساب ' + outgoingFrom.name + ' إلى حساب خارجي، لذلك لم تتم إضافته كإيراد.\n' +
-                            '💰 المبلغ: ' + (isNaN(amountVal) ? 'غير واضح' : amountVal.toLocaleString('en-US', { minimumFractionDigits: 2 }))
-                        );
-                    } else {
-                        await sendMsg(groupId,
-                            '⚠️ قُرئ الإيصال لكن لم يتم مطابقة الحساب بدقة.\n' +
-                            'من: ' + (fromAcc || 'غير واضح') + '\n' +
-                            'إلى: ' + (toAcc || 'غير واضح') + '\n' +
-                            'الاسم: ' + (recipientName || 'غير واضح') + '\n' +
-                            'المبلغ: ' + (isNaN(amountVal) ? 'غير واضح' : amountVal)
-                        );
-                    }
+                    await sendMsg(groupId,
+                        '⚠️ قُرئ الإيصال لكن لم يتم مطابقة حساب المُرسِل.\n' +
+                        'من: ' + (fromAcc || 'غير واضح') + '\n' +
+                        'إلى: ' + (toAcc || 'غير واضح') + '\n' +
+                        'المبلغ: ' + (isNaN(amountVal) ? 'غير واضح' : amountVal)
+                    );
                 }
 
             } catch (err) {
