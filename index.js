@@ -43,9 +43,10 @@ const ACCOUNTS = [
 // وتلصقه في متغيرات البيئة - ده أشهر سبب لخطأ "API key is invalid" رغم إن المفتاح صحيح فعلاً
 const ANTHROPIC_API_KEY = (process.env.ANTHROPIC_API_KEY || '').trim();
 
-// إصلاح عاجل: claude-3-5-sonnet-20241022 موديل متقاعد (retired) من Anthropic بتاريخ
-// 28 أكتوبر 2025 - أي طلب API بيه يفشل بالكامل الآن. رفعته لـ Sonnet 5 الحالي.
-const CLAUDE_MODEL = 'claude-sonnet-5';
+// الموديلات الصحيحة الحالية في Anthropic API (أغسطس 2026):
+//   claude-haiku-4-5-20251001   الأسرع والأرخص، ممتاز لقراءة الإيصالات (مختار)
+//   claude-sonnet-4-6           أدق وأقوى، لكن أغلى
+const CLAUDE_MODEL = 'claude-haiku-4-5-20251001';
 
 // -------------------- إدارة البيانات اليومية --------------------
 
@@ -438,6 +439,14 @@ async function startBot() {
         }
     });
 }
+
+// تشخيص عند البدء: يطبع في اللوق الموديل المستخدم وأول/آخر 4 أحرف من المفتاح
+// لو المفتاح يظهر كـ (MISSING) يبقى لسه ما اتحط في متغيرات Railway
+const keyPreview = ANTHROPIC_API_KEY 
+    ? ANTHROPIC_API_KEY.slice(0, 8) + '...' + ANTHROPIC_API_KEY.slice(-4) + ' (طول: ' + ANTHROPIC_API_KEY.length + ')'
+    : '(MISSING - لا يوجد مفتاح!)';
+console.log('[STARTUP] الموديل المستخدم:', CLAUDE_MODEL);
+console.log('[STARTUP] مفتاح الـAPI:', keyPreview);
 
 startBot();
 
